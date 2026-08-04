@@ -1,5 +1,4 @@
 @echo off
-cd /d "%~dp0"
 setlocal enabledelayedexpansion
 
 :: ============================================================
@@ -7,6 +6,27 @@ setlocal enabledelayedexpansion
 ::  Picks an AI CLI first (Claude / Codex / Gemini / Antigravity)
 ::  then exposes that engine's own parameter settings.
 :: ============================================================
+
+:: ============================================================
+::  WORKING DIRECTORY
+::  This script is meant to be vendored into a bigger project as a
+::  submodule or a plain copy. The agent should run at the top of
+::  that project, not in this folder, so walk up and use the
+::  outermost directory that contains a .git entry.
+::  Override with AI_BAT_ROOT, or with [D] on the confirm screen.
+:: ============================================================
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+
+set "REPO_ROOT="
+if defined AI_BAT_ROOT if exist "%AI_BAT_ROOT%\." set "REPO_ROOT=%AI_BAT_ROOT%"
+
+if not defined REPO_ROOT (
+    set "SCAN=%SCRIPT_DIR%"
+    call :find_root
+)
+if not defined REPO_ROOT set "REPO_ROOT=%SCRIPT_DIR%"
+cd /d "%REPO_ROOT%"
 
 :: ============================================================
 ::  GIT BASH AUTO-DETECT (required by Claude on Windows)
@@ -35,6 +55,7 @@ cls
 echo ============================================================
 echo   AI Launcher
 echo ============================================================
+echo   Working dir: !REPO_ROOT!
 echo.
 echo --- Select AI ---
 echo   [1] Claude       (Anthropic - full agentic CLI)
@@ -715,6 +736,7 @@ goto confirm
 :confirm
 echo ============================================================
 echo   AI:  %AI_NAME%
+echo   DIR: !REPO_ROOT!
 if defined CLAUDE_CONFIG_DIR echo   CONFIG: %CLAUDE_CONFIG_DIR%
 echo.
 echo   FINAL COMMAND:
@@ -722,14 +744,36 @@ echo   %CMD%
 echo.
 echo ============================================================
 echo.
-echo   [Y] Launch    [E] Edit command manually    [R] AI menu    [Q] Quit
+echo   [Y] Launch    [E] Edit command    [D] Change dir    [R] AI menu    [Q] Quit
 echo.
-set /p LAUNCH="Select [Y/E/R/Q] (default=Y): "
+set /p LAUNCH="Select [Y/E/D/R/Q] (default=Y): "
 if "%LAUNCH%"=="" set LAUNCH=Y
 if /i "%LAUNCH%"=="Y" goto run
 if /i "%LAUNCH%"=="E" goto edit
+if /i "%LAUNCH%"=="D" goto chdir
 if /i "%LAUNCH%"=="R" goto ai_select
 if /i "%LAUNCH%"=="Q" goto end
+goto confirm
+
+:chdir
+echo.
+echo   Current:      !REPO_ROOT!
+echo   Script folder: !SCRIPT_DIR!
+echo.
+echo   Enter a path, [S] for the script folder, or blank to keep the current one.
+set /p NEW_ROOT="Working directory: "
+if "!NEW_ROOT!"=="" goto confirm
+if /i "!NEW_ROOT!"=="S" set "NEW_ROOT=!SCRIPT_DIR!"
+if not exist "!NEW_ROOT!\." (
+    echo.
+    echo   [ERROR] Not a directory: !NEW_ROOT!
+    echo.
+    pause
+    goto confirm
+)
+set "REPO_ROOT=!NEW_ROOT!"
+cd /d "!REPO_ROOT!"
+echo.
 goto confirm
 
 :edit
@@ -827,9 +871,8 @@ if not defined CLAUDE_CODE_GIT_BASH_PATH (
 )
 echo.
 
-:: Add this folder to the user PATH
-set "AI_DIR=%~dp0"
-if "!AI_DIR:~-1!"=="\" set "AI_DIR=!AI_DIR:~0,-1!"
+:: Add this folder to the user PATH (the script's own folder, not the repo root)
+set "AI_DIR=!SCRIPT_DIR!"
 echo  Checking user PATH for !AI_DIR!...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:AI_DIR.TrimEnd('\'); $p = [Environment]::GetEnvironmentVariable('Path','User'); if ($null -eq $p) { $p = '' }; $parts = @($p.Split(';') | Where-Object { $_.Trim() -ne '' }); if (@($parts | ForEach-Object { $_.TrimEnd('\') }) -contains $d) { Write-Host '  [OK] Already in user PATH' } else { [Environment]::SetEnvironmentVariable('Path', (($parts + $d) -join ';'), 'User'); Write-Host '  [OK] Added to user PATH' }"
 if errorlevel 1 echo  [FAIL] Could not update the user PATH.
@@ -842,3 +885,20 @@ goto ai_select
 
 :end
 endlocal
+exit /b 0
+
+
+:: ============================================================
+:: HELPER: walk up from !SCAN! recording the outermost .git owner
+:: (.git is a directory in a normal clone, a file in a submodule
+::  or a worktree, so plain "if exist" covers every case)
+:: ============================================================
+:find_root
+if exist "!SCAN!\.git" set "REPO_ROOT=!SCAN!"
+for %%D in ("!SCAN!") do set "PARENT=%%~dpD"
+if "!PARENT:~-1!"=="\" set "PARENT=!PARENT:~0,-1!"
+if "!PARENT!"=="" goto :eof
+if "!PARENT:~-1!"==":" goto :eof
+if /i "!PARENT!"=="!SCAN!" goto :eof
+set "SCAN=!PARENT!"
+goto find_root

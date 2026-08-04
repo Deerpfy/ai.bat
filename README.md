@@ -23,13 +23,48 @@ It's plain batch, so there is nothing to install beyond the CLI itself.
 
 ## Install
 
-1. Put `ai.bat` where you want it: a tools folder, or the repo you work in.
+1. Put `ai.bat` where you want it: a tools folder, a submodule inside a project, or
+   the repo you work in.
 2. Double-click it, or run `ai` from a terminal.
 3. Optional: pick [F] Fix Environment once. It stores `CLAUDE_CODE_GIT_BASH_PATH`
-   and adds the script's folder to your user `PATH`, so `ai` works from anywhere.
+   and adds the folder holding `ai.bat` to your user `PATH`, so `ai` works from
+   anywhere.
 
-The script `cd`s to its own folder on start, so the agent's working directory is
-wherever `ai.bat` lives.
+As a submodule:
+
+```
+git submodule add <url> tools/ai-launcher
+```
+
+## Working directory
+
+The launcher is built to be vendored into a bigger project, as a git submodule or as
+a plain copy. Opening it from that subfolder should still put the agent at the top of
+the whole project, so on start it walks up from its own location and picks the
+outermost directory that contains a `.git` entry.
+
+```
+myapp/                  <- agent runs here
+  .git/
+  src/
+  tools/
+    ai-launcher/        <- ai.bat lives here
+      .git              (submodule pointer file)
+      ai.bat
+```
+
+Nested submodules resolve the same way: the walk keeps going up and always lands on
+the outermost repository. If there is no `.git` anywhere above it, the script falls
+back to its own folder, which is what happens when you use it standalone.
+
+Two ways to override:
+
+- Set `AI_BAT_ROOT` to a directory before launching.
+- Press `[D]` on the confirm screen to type a path, or `[S]` for the folder `ai.bat`
+  lives in.
+
+The resolved path is shown on the main menu and again on the confirm screen, so you
+can see where the agent will run before it starts.
 
 ## Requirements
 
@@ -51,8 +86,8 @@ account can use. It needs `ANTHROPIC_API_KEY` in your environment, or an `apiKey
 `%APPDATA%\claude\config.json`. Without one it prints a static list instead. The key
 is read at runtime and never stored by this script.
 
-The last screen shows the full command before anything runs. [E] lets you edit it by
-hand.
+The last screen shows the full command and working directory before anything runs.
+[E] lets you edit the command by hand, [D] changes the directory.
 
 ## The default bypasses permission checks
 
