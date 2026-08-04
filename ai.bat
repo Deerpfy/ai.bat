@@ -816,8 +816,7 @@ echo ============================================================
 echo.
 
 :: Set git-bash permanently
-:: NOTE: setx is deliberately avoided here - it silently truncates values at
-:: 1024 characters, which can corrupt a long user PATH.
+:: setx is not used here - it truncates values at 1024 chars and can wreck PATH
 if not defined CLAUDE_CODE_GIT_BASH_PATH (
     echo  [SKIP] Git Bash not found - nothing to set.
     echo         Install from https://git-scm.com/downloads/win, then re-run [F].

@@ -1,11 +1,11 @@
 # ai.bat
 
-A single-file Windows launcher for terminal AI coding agents. Run it in any project
-folder and it walks you through the flags for whichever CLI you pick, shows the final
-command, and launches it.
+A single-file Windows launcher for terminal AI coding agents. Run it in a project
+folder, answer the menu prompts for whichever CLI you pick, check the assembled
+command, and launch.
 
-Supports **Claude Code**, **Codex** (OpenAI), **Gemini** (Google) and **Antigravity**
-(`agy`). No dependencies beyond the CLI you want to use — it's plain batch.
+Supports Claude Code, Codex (OpenAI), Gemini (Google) and Antigravity (`agy`).
+It's plain batch, so there is nothing to install beyond the CLI itself.
 
 ```
   AI Launcher
@@ -23,11 +23,10 @@ Supports **Claude Code**, **Codex** (OpenAI), **Gemini** (Google) and **Antigrav
 
 ## Install
 
-1. Drop `ai.bat` anywhere (a tools folder, or the repo you work in).
+1. Put `ai.bat` where you want it: a tools folder, or the repo you work in.
 2. Double-click it, or run `ai` from a terminal.
-3. Optional: pick **[F] Fix Environment** once. It stores
-   `CLAUDE_CODE_GIT_BASH_PATH` and adds the script's folder to your user `PATH`,
-   so `ai` works from anywhere.
+3. Optional: pick [F] Fix Environment once. It stores `CLAUDE_CODE_GIT_BASH_PATH`
+   and adds the script's folder to your user `PATH`, so `ai` works from anywhere.
 
 The script `cd`s to its own folder on start, so the agent's working directory is
 wherever `ai.bat` lives.
@@ -36,55 +35,55 @@ wherever `ai.bat` lives.
 
 - Windows with `cmd.exe`
 - At least one agent CLI on `PATH`: `claude`, `codex`, `gemini`, or `agy`
-- **Git Bash** if you use Claude Code — the script auto-detects it in the usual
-  install locations (`%LOCALAPPDATA%\Programs\Git`, `Program Files`, scoop, or
-  anything `where bash.exe` finds) and sets `CLAUDE_CODE_GIT_BASH_PATH` for you
+- Git Bash if you use Claude Code. The script looks in the usual install locations
+  (`%LOCALAPPDATA%\Programs\Git`, `Program Files`, scoop, or anything
+  `where bash.exe` finds) and sets `CLAUDE_CODE_GIT_BASH_PATH` for you.
 
-## What the Claude menu exposes
+## What the Claude menu covers
 
-Model · effort level · permission mode · session (new / continue / resume / fork /
-from PR) · verbose & debug · extra working dirs · system prompt (append or replace) ·
-MCP config · tool restrictions · Chrome integration · git worktree (+ tmux) ·
-startup mode (`--bare`, `--safe-mode`) · IDE attach.
+Model, effort level, permission mode, session handling (new, continue, resume, fork,
+from PR), verbose and debug output, extra working directories, system prompt (append
+or replace), MCP config, tool restrictions, Chrome integration, git worktree with
+optional tmux, startup mode (`--bare`, `--safe-mode`), and IDE attach.
 
-Model option **[8]** queries `https://api.anthropic.com/v1/models` for the models your
-account can actually use. It needs `ANTHROPIC_API_KEY` in your environment (or an
-`apiKey` in `%APPDATA%\claude\config.json`); without one it just prints a static list.
-The key is only read at runtime and never stored by this script.
+Model option [8] queries `https://api.anthropic.com/v1/models` for the models your
+account can use. It needs `ANTHROPIC_API_KEY` in your environment, or an `apiKey` in
+`%APPDATA%\claude\config.json`. Without one it prints a static list instead. The key
+is read at runtime and never stored by this script.
 
-At the end you get a confirmation screen with the assembled command, and **[E]** lets
-you hand-edit it before launching.
+The last screen shows the full command before anything runs. [E] lets you edit it by
+hand.
 
-## ⚠️ Default is `--dangerously-skip-permissions`
+## The default bypasses permission checks
 
-Pressing Enter through every Claude prompt launches with **all permission checks
-bypassed** — the agent can run any command in that folder without asking. That's a
-deliberate choice for a trusted local repo; it is not a safe default for code you
-don't trust. Pick permission mode **[4] manual** (or `[5] plan`) if you want to be
-asked. The Codex and Gemini menus have equivalent `--yolo` options, marked
-`[DANGEROUS]`.
+Pressing Enter through every Claude prompt gives you
+`claude --dangerously-skip-permissions`, which lets the agent run any command in that
+folder without asking. That is fine for a repo you trust and a bad idea for anything
+else. Pick permission mode [4] manual, or [5] plan, if you want to be asked. The
+Codex and Gemini menus have equivalent `--yolo` options, marked `[DANGEROUS]`.
 
 ## Multiple Claude accounts
 
 The account menu points `CLAUDE_CONFIG_DIR` at `%USERPROFILE%\.claude-acc1` or
-`.claude-acc2`, so two logins can coexist without re-authenticating. Run **[A] Auth
-Setup** once to log both in — the second one is easier in a different browser, since
-the OAuth flow follows whichever browser is already signed in. Each account must be
-your own; check your provider's terms before using this to work around usage limits.
+`.claude-acc2`, so two logins can coexist without re-authenticating. Run [A] Auth
+Setup once to log both in. The second login is easier in a different browser, since
+the OAuth flow follows whichever browser is already signed in. Both accounts should
+be your own; check your provider's terms before using this to get around usage
+limits.
 
-No credentials live in this repo — they stay in those config directories.
+No credentials are stored in this repo. They stay in those config directories.
 
 ## Notes
 
-- Free-text answers (prompts, paths) are pasted straight into the command line.
-  Characters that are special to `cmd` (`&`, `|`, `>`, `^`) will misbehave — use
-  **[E]** to fix the command by hand if you need them.
-- **[F] Fix Environment** writes to your *user* `PATH` via
-  `[Environment]::SetEnvironmentVariable`, deliberately not `setx` — `setx`
-  truncates at 1024 characters and can silently destroy a long `PATH`.
-- Flag names track the current CLIs; if a vendor renames one, edit the matching
+- Free-text answers (prompts, paths) are pasted straight into the command line, so
+  characters that are special to `cmd` (`&`, `|`, `>`, `^`) will misbehave. Use [E]
+  to repair the command by hand if you need them.
+- [F] Fix Environment writes to your user `PATH` with
+  `[Environment]::SetEnvironmentVariable` rather than `setx`, because `setx`
+  truncates at 1024 characters and can destroy a long `PATH` without warning.
+- Flag names follow the current CLIs. If a vendor renames one, edit the matching
   `set "CMD=..."` line.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
