@@ -1,0 +1,21 @@
+{
+  "comment": "Model menus for ai.bat. Order = menu order; the first 9 per engine are shown. Edit by hand or run: ai.bat --update-models",
+  "claude": [
+    { "id": "claude-opus-5", "desc": "Opus 5 - newest Opus" },
+    { "id": "claude-fable-5", "desc": "Fable 5 - most capable tier" },
+    { "id": "claude-opus-4-8", "desc": "Opus 4.8 - adaptive thinking" },
+    { "id": "claude-opus-4-7", "desc": "Opus 4.7 - adaptive thinking" },
+    { "id": "claude-sonnet-5", "desc": "Sonnet 5 - near-Opus, faster" },
+    { "id": "claude-sonnet-4-6", "desc": "Sonnet 4.6 - extended + adaptive" },
+    { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" },
+    { "id": "claude-opus-4-6", "desc": "Opus 4.6 - extended + adaptive" }
+  ],
+  "codex": [
+    { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },
+    { "id": "gpt-5.6-terra", "desc": "balanced, for everyday work" },
+    { "id": "gpt-5.6-luna", "desc": "fast and affordable" },
+    { "id": "gpt-5.5", "desc": "complex coding, research, real work" },
+    { "id": "gpt-5.4", "desc": "strong for everyday coding" },
+    { "id": "gpt-5.4-mini", "desc": "small, fast, cost-efficient" }
+  ]
+}

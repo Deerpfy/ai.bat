@@ -68,7 +68,8 @@ can see where the agent will run before it starts.
 
 ## Requirements
 
-- Windows with `cmd.exe`
+- Windows with `cmd.exe` and PowerShell 5+ (preinstalled on Windows 10/11) -
+  PowerShell reads `ai-models.json` and powers [F] fix env and [U] update models
 - At least one agent CLI on `PATH`: `claude`, `codex`, `gemini`, or `agy`
 - Git Bash if you use Claude Code. The script looks in the usual install locations
   (`%LOCALAPPDATA%\Programs\Git`, `Program Files`, scoop, or anything
@@ -81,13 +82,55 @@ from PR), verbose and debug output, extra working directories, system prompt (ap
 or replace), MCP config, tool restrictions, Chrome integration, git worktree with
 optional tmux, startup mode (`--bare`, `--safe-mode`), and IDE attach.
 
-Model option [8] queries `https://api.anthropic.com/v1/models` for the models your
+Model option [C] queries `https://api.anthropic.com/v1/models` for the models your
 account can use. It needs `ANTHROPIC_API_KEY` in your environment, or an `apiKey` in
-`%APPDATA%\claude\config.json`. Without one it prints a static list instead. The key
-is read at runtime and never stored by this script.
+`%APPDATA%\claude\config.json`. Without one it points you at `ai-models.json` instead.
+The key is read at runtime and never stored by this script.
 
 The last screen shows the full command and working directory before anything runs.
 [E] lets you edit the command by hand, [D] changes the directory.
+
+## The model lists
+
+The Claude and Codex model menus come from `ai-models.json`, which sits next to
+`ai.bat`. If the file is missing (say you copied `ai.bat` on its own), it is
+recreated with defaults on first use.
+
+```json
+{
+  "claude": [
+    { "id": "claude-opus-5", "desc": "Opus 5 - newest Opus" }
+  ],
+  "codex": [
+    { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" }
+  ]
+}
+```
+
+Array order is menu order, and the first nine entries per engine become keys
+[1]-[9]. Edit the file any time - the menus notice the change on their next
+render, no restart needed. Reading the JSON costs one short PowerShell call per
+change; the result is cached for the rest of the run, so navigating menus stays
+instant. Characters outside a safe set (letters, digits, spaces and `. _ , + / @
+: -`) are stripped from ids and descriptions, because both end up on a `cmd`
+command line.
+
+### Updating the lists from GitHub
+
+`ai --update-models` (or [U] on the engine menu) downloads the current list from
+
+```
+https://raw.githubusercontent.com/Deerpfy/ai.bat/main/ai-models.json
+```
+
+validates that it parses as JSON, and only then replaces the local file. Push a
+new `ai-models.json` to this repo and every copy can pull it on request - no
+GitHub Pages setup needed, since raw.githubusercontent.com serves the file
+directly. If you would rather host it elsewhere (a GitHub Pages site, any static
+host), point `AI_BAT_MODELS_URL` at that URL; the mechanism is identical.
+
+Set `AI_BAT_AUTO_UPDATE=1` to refresh automatically at launch, at most once a
+day. Mind that a successful update replaces local hand edits to the file.
 
 ## The default bypasses permission checks
 
