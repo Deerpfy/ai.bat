@@ -132,6 +132,29 @@ host), point `AI_BAT_MODELS_URL` at that URL; the mechanism is identical.
 Set `AI_BAT_AUTO_UPDATE=1` to refresh automatically at launch, at most once a
 day. Mind that a successful update replaces local hand edits to the file.
 
+### Rebuilding from live sources
+
+`ai --refresh-models` (or [L] on the update screen) rebuilds `ai-models.json`
+from what is actually available right now, instead of hand-maintaining it:
+
+- **Claude** comes from the official `api.anthropic.com/v1/models` when a key
+  is found (`ANTHROPIC_API_KEY`, or `apiKey` in `%APPDATA%\claude\config.json`),
+  falling back to [models.dev](https://models.dev/api.json) - a public,
+  no-auth model database that uses the vendors' native ids, sorted here by
+  release date.
+- **Codex** comes from the picker cache codex itself maintains in
+  `%USERPROFILE%\.codex\models_cache.json` (entries the picker lists, in its
+  priority order). Those are the only slugs `codex -m` accepts, so the local
+  cache beats any website.
+
+A section whose sources are unreachable keeps its current entries; if nothing
+is reachable the file is left untouched and the exit code is 1. The output is
+deterministic, so re-running it with no upstream changes produces no diff.
+
+The publishing loop for keeping every copy current: run `ai --refresh-models`,
+review the result, push it to this repo - and every other copy picks it up via
+[U] / `--update-models` / `AI_BAT_AUTO_UPDATE`.
+
 ## The default bypasses permission checks
 
 Pressing Enter through every Claude prompt gives you

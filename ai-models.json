@@ -1,21 +1,67 @@
 {
-  "comment": "Model menus for ai.bat. Order = menu order; the first 9 per engine are shown. Edit by hand or run: ai.bat --update-models",
-  "claude": [
-    { "id": "claude-opus-5", "desc": "Opus 5 - newest Opus" },
-    { "id": "claude-fable-5", "desc": "Fable 5 - most capable tier" },
-    { "id": "claude-opus-4-8", "desc": "Opus 4.8 - adaptive thinking" },
-    { "id": "claude-opus-4-7", "desc": "Opus 4.7 - adaptive thinking" },
-    { "id": "claude-sonnet-5", "desc": "Sonnet 5 - near-Opus, faster" },
-    { "id": "claude-sonnet-4-6", "desc": "Sonnet 4.6 - extended + adaptive" },
-    { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" },
-    { "id": "claude-opus-4-6", "desc": "Opus 4.6 - extended + adaptive" }
-  ],
-  "codex": [
-    { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },
-    { "id": "gpt-5.6-terra", "desc": "balanced, for everyday work" },
-    { "id": "gpt-5.6-luna", "desc": "fast and affordable" },
-    { "id": "gpt-5.5", "desc": "complex coding, research, real work" },
-    { "id": "gpt-5.4", "desc": "strong for everyday coding" },
-    { "id": "gpt-5.4-mini", "desc": "small, fast, cost-efficient" }
-  ]
+    "comment":  "Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown.",
+    "claude":  [
+                   {
+                       "id":  "claude-opus-5",
+                       "desc":  "Claude Opus 5 - 2026-07-24"
+                   },
+                   {
+                       "id":  "claude-sonnet-5",
+                       "desc":  "Claude Sonnet 5 - 2026-06-29"
+                   },
+                   {
+                       "id":  "claude-fable-5",
+                       "desc":  "Claude Fable 5 - 2026-06-07"
+                   },
+                   {
+                       "id":  "claude-opus-4-8",
+                       "desc":  "Claude Opus 4.8 - 2026-05-28"
+                   },
+                   {
+                       "id":  "claude-opus-4-7",
+                       "desc":  "Claude Opus 4.7 - 2026-04-14"
+                   },
+                   {
+                       "id":  "claude-sonnet-4-6",
+                       "desc":  "Claude Sonnet 4.6 - 2026-02-17"
+                   },
+                   {
+                       "id":  "claude-opus-4-6",
+                       "desc":  "Claude Opus 4.6 - 2026-02-04"
+                   },
+                   {
+                       "id":  "claude-opus-4-5",
+                       "desc":  "Claude Opus 4.5 (latest) - 2025-11-24"
+                   },
+                   {
+                       "id":  "claude-opus-4-5-20251101",
+                       "desc":  "Claude Opus 4.5 - 2025-11-24"
+                   }
+               ],
+    "codex":  [
+                  {
+                      "id":  "gpt-5.6-sol",
+                      "desc":  "Latest frontier agentic coding model."
+                  },
+                  {
+                      "id":  "gpt-5.6-terra",
+                      "desc":  "Balanced agentic coding model for everyday work."
+                  },
+                  {
+                      "id":  "gpt-5.6-luna",
+                      "desc":  "Fast and affordable agentic coding model."
+                  },
+                  {
+                      "id":  "gpt-5.5",
+                      "desc":  "Frontier model for complex coding, research, and real-world work."
+                  },
+                  {
+                      "id":  "gpt-5.4",
+                      "desc":  "Strong model for everyday coding."
+                  },
+                  {
+                      "id":  "gpt-5.4-mini",
+                      "desc":  "Small, fast, and cost-efficient model for simpler coding tasks."
+                  }
+              ]
 }

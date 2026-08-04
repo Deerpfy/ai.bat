@@ -70,7 +70,7 @@ for %%V in (
   AG_PROMPT_TEXT
   NEW_ROOT NEW_CMD SCAN PARENT AI_DIR PS_SCRIPT
   MDL_COUNT MDL_MORE MDL_STAMP MDL_BAD MDL_UPD_RC BF_MKEYS BF_MDEF BF_MRANGE
-  BF_MST BF_UPDATE
+  BF_MST BF_UPDATE BF_REFRESH
 ) do set "%%V="
 
 rem ---- accent: orange.  Override with AI_BAT_ACCENT (e.g. 33 for basic yellow)
@@ -95,6 +95,7 @@ call :detect_git_bash
 
 if defined BF_FIXENV goto :env_fix_go
 if defined BF_UPDATE goto :update_flag
+if defined BF_REFRESH goto :refresh_flag
 
 rem Opt-in launch-time refresh; fires at most once a day and is bounded by the
 rem fetch timeout, so an offline machine stalls briefly once, not every start.
@@ -1245,22 +1246,36 @@ call :header "Update model lists"
 call :sec "SOURCE"
 call :kv "URL " "!AI_BAT_MODELS_URL!"
 call :kv "File" "!MODELS_FILE!"
+call :sec "UPDATE MODE"
+call :item "Y" "From URL"     "download the published list from GitHub"
+call :item "L" "Live rebuild" "Anthropic API or models.dev + codex cache"
+call :item "N" "Cancel"       "keep the current file"
 echo(
-call :note "Replaces the local file, including your hand edits, on success."
-call :note "Override the source by setting AI_BAT_MODELS_URL."
-call :foot "[Y] update   [N] cancel" "timeout = no"
-call :menu_key "YN" "N"
+call :note "Either mode replaces the local file, including hand edits."
+call :foot "[Y] from url   [L] live   [N] cancel" "timeout = no"
+call :menu_key "YLN" "N"
 if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="L" goto :update_models_live
 if not "!BF_CH!"=="Y" goto :ai_select
 echo(
 call :sec "FETCHING"
 call :models_update_go
 call :hold
 goto :ai_select
+:update_models_live
+echo(
+call :sec "REBUILDING FROM LIVE SOURCES"
+call :models_refresh_go
+call :hold
+goto :ai_select
 
-rem --update-models: headless one-shot, mirrors --fix-env (BAT-010).
+rem --update-models / --refresh-models: headless one-shots (BAT-010).
 :update_flag
 call :models_update_go
+set "BF_EXIT=!MDL_UPD_RC!"
+goto :cleanup
+:refresh_flag
+call :models_refresh_go
 set "BF_EXIT=!MDL_UPD_RC!"
 goto :cleanup
 
@@ -1305,6 +1320,78 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
 if !ERRORLEVEL! NEQ 0 set "MDL_UPD_RC=1"
 del "!PS_SCRIPT!" >nul 2>&1
 if "!MDL_UPD_RC!"=="1" call :err "model list update failed - check the URL above and your connection, then retry"
+goto :eof
+
+rem Live rebuild. Claude comes from the Anthropic API when a key is available
+rem (ANTHROPIC_API_KEY or apiKey in %%APPDATA%%\claude\config.json - same
+rem sources as :fetch_models), else from models.dev, a public no-auth model
+rem database that uses the vendors' native ids. Codex comes from the picker
+rem cache codex itself maintains in ~/.codex/models_cache.json - those are the
+rem only slugs "codex -m" accepts, so no website beats it. Any section whose
+rem sources are unreachable keeps its current entries; if nothing is reachable
+rem the file is left untouched and the exit code is 1. Output is deterministic
+rem (no timestamps), so re-running without upstream changes is a no-op commit.
+:models_refresh_go
+set "MDL_UPD_RC=0"
+set "PS_SCRIPT=%TEMP%\ai-bat-refresh-%RANDOM%%RANDOM%.ps1"
+echo $ErrorActionPreference = 'Stop' > "!PS_SCRIPT!"
+echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 >> "!PS_SCRIPT!"
+echo $dst = $env:MODELS_FILE >> "!PS_SCRIPT!"
+echo $old = $null >> "!PS_SCRIPT!"
+echo if (Test-Path -LiteralPath $dst) { try { $old = Get-Content -Raw -LiteralPath $dst ^| ConvertFrom-Json } catch { $old = $null } } >> "!PS_SCRIPT!"
+echo $claude = @() >> "!PS_SCRIPT!"
+echo $srcC = '' >> "!PS_SCRIPT!"
+echo $key = $env:ANTHROPIC_API_KEY >> "!PS_SCRIPT!"
+echo if (-not $key) { >> "!PS_SCRIPT!"
+echo     $cfg = Join-Path $env:APPDATA 'claude\config.json' >> "!PS_SCRIPT!"
+echo     if (Test-Path -LiteralPath $cfg) { try { $c = Get-Content -Raw -LiteralPath $cfg ^| ConvertFrom-Json; if ($c.apiKey) { $key = $c.apiKey } } catch {} } >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+echo if ($key) { >> "!PS_SCRIPT!"
+echo     try { >> "!PS_SCRIPT!"
+echo         $h = @{ 'x-api-key' = $key; 'anthropic-version' = '2023-06-01' } >> "!PS_SCRIPT!"
+echo         $resp = Invoke-RestMethod -Uri 'https://api.anthropic.com/v1/models?limit=100' -Headers $h -TimeoutSec 10 >> "!PS_SCRIPT!"
+echo         $claude = @($resp.data ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
+echo             $d = [string]$_.created_at; if ($d.Length -ge 10) { $d = $d.Substring(0,10) } >> "!PS_SCRIPT!"
+echo             [pscustomobject]@{ id = $_.id; desc = ([string]$_.display_name + ' - ' + $d) } }) >> "!PS_SCRIPT!"
+echo         $srcC = 'Anthropic API' >> "!PS_SCRIPT!"
+echo     } catch {} >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+echo if (-not $claude) { >> "!PS_SCRIPT!"
+echo     try { >> "!PS_SCRIPT!"
+echo         $md = Invoke-RestMethod -Uri 'https://models.dev/api.json' -TimeoutSec 15 >> "!PS_SCRIPT!"
+echo         $claude = @($md.anthropic.models.PSObject.Properties ^| Sort-Object { [string]$_.Value.release_date } -Descending ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
+echo             [pscustomobject]@{ id = $_.Name; desc = ([string]$_.Value.name + ' - ' + [string]$_.Value.release_date) } }) >> "!PS_SCRIPT!"
+echo         $srcC = 'models.dev' >> "!PS_SCRIPT!"
+echo     } catch {} >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+echo if (-not $claude -and $old.claude) { $claude = @($old.claude); $srcC = 'kept existing - fetch failed' } >> "!PS_SCRIPT!"
+echo $codex = @() >> "!PS_SCRIPT!"
+echo $srcX = '' >> "!PS_SCRIPT!"
+echo $cc = Join-Path $env:USERPROFILE '.codex\models_cache.json' >> "!PS_SCRIPT!"
+echo if (Test-Path -LiteralPath $cc) { >> "!PS_SCRIPT!"
+echo     try { >> "!PS_SCRIPT!"
+echo         $cj = Get-Content -Raw -LiteralPath $cc ^| ConvertFrom-Json >> "!PS_SCRIPT!"
+echo         $codex = @($cj.models ^| Where-Object { $_.visibility -eq 'list' } ^| Sort-Object priority ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
+echo             [pscustomobject]@{ id = $_.slug; desc = [string]$_.description } }) >> "!PS_SCRIPT!"
+echo         $srcX = 'codex cache' >> "!PS_SCRIPT!"
+echo     } catch {} >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+echo if (-not $codex -and $old.codex) { $codex = @($old.codex); $srcX = 'kept existing - no codex cache' } >> "!PS_SCRIPT!"
+echo if ((-not $claude) -and (-not $codex)) { Write-Host '   Nothing fetched - file left unchanged.'; exit 1 } >> "!PS_SCRIPT!"
+echo $doc = [ordered]@{ comment = 'Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown.'; claude = $claude; codex = $codex } >> "!PS_SCRIPT!"
+echo $json = $doc ^| ConvertTo-Json -Depth 4 >> "!PS_SCRIPT!"
+echo $tmp = $dst + '.new' >> "!PS_SCRIPT!"
+echo [IO.File]::WriteAllText($tmp, $json, [Text.UTF8Encoding]::new($false)) >> "!PS_SCRIPT!"
+echo $null = Get-Content -Raw -LiteralPath $tmp ^| ConvertFrom-Json >> "!PS_SCRIPT!"
+echo Move-Item -LiteralPath $tmp -Destination $dst -Force >> "!PS_SCRIPT!"
+echo Write-Host ('   claude: ' + $claude.Count + ' models - source: ' + $srcC) >> "!PS_SCRIPT!"
+echo Write-Host ('   codex:  ' + $codex.Count + ' models - source: ' + $srcX) >> "!PS_SCRIPT!"
+echo Write-Host ('   Wrote ' + $dst) >> "!PS_SCRIPT!"
+echo exit 0 >> "!PS_SCRIPT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
+if !ERRORLEVEL! NEQ 0 set "MDL_UPD_RC=1"
+del "!PS_SCRIPT!" >nul 2>&1
+if "!MDL_UPD_RC!"=="1" call :err "live model refresh failed - no source reachable; the local file was not changed"
 goto :eof
 
 
@@ -1542,6 +1629,7 @@ if /i "!BF_A!"=="--yes"       goto :args_yes
 if /i "!BF_A!"=="--print-cmd" goto :args_printcmd
 if /i "!BF_A!"=="--fix-env"   goto :args_fixenv
 if /i "!BF_A!"=="--update-models" goto :args_update
+if /i "!BF_A!"=="--refresh-models" goto :args_refresh
 if /i "!BF_A!"=="--ai"      goto :args_ai
 if /i "!BF_A!"=="--dir"     goto :args_dir
 if /i "!BF_A!"=="--model"   goto :args_model
@@ -1586,6 +1674,10 @@ shift
 goto :parse_args
 :args_update
 set "BF_UPDATE=1"
+shift
+goto :parse_args
+:args_refresh
+set "BF_REFRESH=1"
 shift
 goto :parse_args
 :args_ai
@@ -1781,6 +1873,7 @@ echo(  --dir ^<path^>               working directory to run in
 echo(  --print-cmd                print the assembled command, do not run it
 echo(  --fix-env                  set git-bash + PATH permanently, then exit
 echo(  --update-models            download the model list, then exit
+echo(  --refresh-models           rebuild the list from live sources, then exit
 echo(  --yes                      skip confirmation prompts
 echo(  --no-color                 disable colored output
 echo(  --no-input                 never prompt; fail instead
