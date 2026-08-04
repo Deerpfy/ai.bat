@@ -3,7 +3,7 @@ cd /d "%~dp0"
 setlocal enabledelayedexpansion
 
 :: ============================================================
-::  AI LAUNCHER - BetterGuard Web Source
+::  AI LAUNCHER
 ::  Picks an AI CLI first (Claude / Codex / Gemini / Antigravity)
 ::  then exposes that engine's own parameter settings.
 :: ============================================================
@@ -33,7 +33,7 @@ if not defined CLAUDE_CODE_GIT_BASH_PATH (
 :ai_select
 cls
 echo ============================================================
-echo   AI Launcher - BetterGuard Web Source
+echo   AI Launcher
 echo ============================================================
 echo.
 echo --- Select AI ---
@@ -65,6 +65,10 @@ goto ai_select
 set "AI_NAME=Claude"
 set "CLAUDE_CONFIG_DIR="
 set "CMD=claude --dangerously-skip-permissions"
+:: flags kept separately so a later permission-mode choice can rebuild CMD
+set "MODEL_FLAG="
+set "EFFORT_FLAG="
+set "PERM_MODE="
 
 if not defined CLAUDE_CODE_GIT_BASH_PATH (
     echo.
@@ -119,14 +123,15 @@ echo   [9] Skip (no --model flag)
 echo.
 set /p MODEL_CHOICE="Select model [1-9] (default=1): "
 if "%MODEL_CHOICE%"=="" set MODEL_CHOICE=1
-if "%MODEL_CHOICE%"=="1" set "CMD=%CMD% --model claude-opus-5"
-if "%MODEL_CHOICE%"=="2" set "CMD=%CMD% --model claude-fable-5"
-if "%MODEL_CHOICE%"=="3" set "CMD=%CMD% --model claude-opus-4-8"
-if "%MODEL_CHOICE%"=="4" set "CMD=%CMD% --model claude-opus-4-7"
-if "%MODEL_CHOICE%"=="5" set "CMD=%CMD% --model claude-sonnet-4-6"
-if "%MODEL_CHOICE%"=="6" set "CMD=%CMD% --model claude-haiku-4-5-20251001"
-if "%MODEL_CHOICE%"=="7" set "CMD=%CMD% --model claude-opus-4-6"
+if "%MODEL_CHOICE%"=="1" set "MODEL_FLAG=--model claude-opus-5"
+if "%MODEL_CHOICE%"=="2" set "MODEL_FLAG=--model claude-fable-5"
+if "%MODEL_CHOICE%"=="3" set "MODEL_FLAG=--model claude-opus-4-8"
+if "%MODEL_CHOICE%"=="4" set "MODEL_FLAG=--model claude-opus-4-7"
+if "%MODEL_CHOICE%"=="5" set "MODEL_FLAG=--model claude-sonnet-4-6"
+if "%MODEL_CHOICE%"=="6" set "MODEL_FLAG=--model claude-haiku-4-5-20251001"
+if "%MODEL_CHOICE%"=="7" set "MODEL_FLAG=--model claude-opus-4-6"
 if "%MODEL_CHOICE%"=="8" goto custom_model
+if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
 goto after_model
 
 :custom_model
@@ -180,7 +185,8 @@ echo.
 echo   Tip: Use /model inside Claude to switch models during a session.
 echo.
 set /p CUSTOM_MODEL="Enter model ID: "
-set "CMD=!CMD! --model !CUSTOM_MODEL!"
+if not "!CUSTOM_MODEL!"=="" set "MODEL_FLAG=--model !CUSTOM_MODEL!"
+if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
 
 :after_model
 echo.
@@ -197,11 +203,12 @@ echo   [6] Maximum   (hardest problems)
 echo.
 set /p BUDGET_CHOICE="Select effort [1-6] (default=1): "
 if "%BUDGET_CHOICE%"=="" set BUDGET_CHOICE=1
-if "%BUDGET_CHOICE%"=="2" set "CMD=%CMD% --effort low"
-if "%BUDGET_CHOICE%"=="3" set "CMD=%CMD% --effort medium"
-if "%BUDGET_CHOICE%"=="4" set "CMD=%CMD% --effort high"
-if "%BUDGET_CHOICE%"=="5" set "CMD=%CMD% --effort xhigh"
-if "%BUDGET_CHOICE%"=="6" set "CMD=%CMD% --effort max"
+if "%BUDGET_CHOICE%"=="2" set "EFFORT_FLAG=--effort low"
+if "%BUDGET_CHOICE%"=="3" set "EFFORT_FLAG=--effort medium"
+if "%BUDGET_CHOICE%"=="4" set "EFFORT_FLAG=--effort high"
+if "%BUDGET_CHOICE%"=="5" set "EFFORT_FLAG=--effort xhigh"
+if "%BUDGET_CHOICE%"=="6" set "EFFORT_FLAG=--effort max"
+if defined EFFORT_FLAG set "CMD=!CMD! !EFFORT_FLAG!"
 echo.
 
 :: --- 3. PERMISSION MODE ---
@@ -210,30 +217,24 @@ echo --- Permission Mode ---
 echo   [1] bypassPermissions     (--dangerously-skip-permissions, default)
 echo   [2] dontAsk               (auto-approve, no prompts)
 echo   [3] acceptEdits           (auto-approve edits, prompt for commands)
-echo   [4] default               (prompt for sensitive actions)
+echo   [4] manual                (prompt for sensitive actions)
 echo   [5] plan                  (show plan first, then execute)
 echo   [6] auto                  (auto-approves safe actions, asks for risky ones)
 echo.
 set /p PERM_CHOICE="Select permission mode [1-6] (default=1): "
 if "%PERM_CHOICE%"=="" set PERM_CHOICE=1
-if "%PERM_CHOICE%"=="2" set "CMD=claude --permission-mode dontAsk" & goto rebuild_perm
-if "%PERM_CHOICE%"=="3" set "CMD=claude --permission-mode acceptEdits" & goto rebuild_perm
-if "%PERM_CHOICE%"=="4" set "CMD=claude --permission-mode default" & goto rebuild_perm
-if "%PERM_CHOICE%"=="5" set "CMD=claude --permission-mode plan" & goto rebuild_perm
-if "%PERM_CHOICE%"=="6" set "CMD=claude --permission-mode auto" & goto rebuild_perm
-goto after_perm
+if "%PERM_CHOICE%"=="2" set "PERM_MODE=dontAsk"
+if "%PERM_CHOICE%"=="3" set "PERM_MODE=acceptEdits"
+if "%PERM_CHOICE%"=="4" set "PERM_MODE=manual"
+if "%PERM_CHOICE%"=="5" set "PERM_MODE=plan"
+if "%PERM_CHOICE%"=="6" set "PERM_MODE=auto"
 
-:rebuild_perm
-set "PERM_BASE=!CMD!"
-set "CMD=!PERM_BASE!"
-if "%MODEL_CHOICE%"=="1" set "CMD=!CMD! --model claude-opus-5"
-if "%MODEL_CHOICE%"=="2" set "CMD=!CMD! --model claude-fable-5"
-if "%MODEL_CHOICE%"=="3" set "CMD=!CMD! --model claude-opus-4-8"
-if "%MODEL_CHOICE%"=="4" set "CMD=!CMD! --model claude-opus-4-7"
-if "%MODEL_CHOICE%"=="5" set "CMD=!CMD! --model claude-sonnet-4-6"
-if "%MODEL_CHOICE%"=="6" set "CMD=!CMD! --model claude-haiku-4-5-20251001"
-if "%MODEL_CHOICE%"=="7" set "CMD=!CMD! --model claude-opus-4-6"
-if "%MODEL_CHOICE%"=="8" set "CMD=!CMD! --model !CUSTOM_MODEL!"
+:: anything other than [1] replaces the base command, so re-apply model + effort
+if defined PERM_MODE (
+    set "CMD=claude --permission-mode !PERM_MODE!"
+    if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
+    if defined EFFORT_FLAG set "CMD=!CMD! !EFFORT_FLAG!"
+)
 
 :after_perm
 echo.
@@ -798,7 +799,7 @@ claude auth status
 echo.
 
 echo  ========================================
-echo   Done! Both accounts saved.
+echo   Done^! Both accounts saved.
 echo   Press any key to return to the Claude menu.
 echo  ========================================
 pause >nul
@@ -815,27 +816,27 @@ echo ============================================================
 echo.
 
 :: Set git-bash permanently
-echo  Setting CLAUDE_CODE_GIT_BASH_PATH permanently...
-setx CLAUDE_CODE_GIT_BASH_PATH "%CLAUDE_CODE_GIT_BASH_PATH%"
-echo  [OK] Git Bash: %CLAUDE_CODE_GIT_BASH_PATH%
+:: NOTE: setx is deliberately avoided here - it silently truncates values at
+:: 1024 characters, which can corrupt a long user PATH.
+if not defined CLAUDE_CODE_GIT_BASH_PATH (
+    echo  [SKIP] Git Bash not found - nothing to set.
+    echo         Install from https://git-scm.com/downloads/win, then re-run [F].
+) else (
+    echo  Setting CLAUDE_CODE_GIT_BASH_PATH permanently...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Environment]::SetEnvironmentVariable('CLAUDE_CODE_GIT_BASH_PATH', $env:CLAUDE_CODE_GIT_BASH_PATH, 'User')"
+    if errorlevel 1 (echo  [FAIL] Could not write the variable.) else (echo  [OK] Git Bash: !CLAUDE_CODE_GIT_BASH_PATH!)
+)
 echo.
 
-:: Add this folder to PATH
+:: Add this folder to the user PATH
 set "AI_DIR=%~dp0"
 if "!AI_DIR:~-1!"=="\" set "AI_DIR=!AI_DIR:~0,-1!"
-echo  Checking PATH for %AI_DIR%...
-echo %PATH% | findstr /i /c:"%AI_DIR%" >nul 2>nul
-if %errorlevel% equ 0 (
-    echo  [OK] Already in PATH
-) else (
-    echo  Adding to user PATH...
-    for /f "tokens=*" %%A in ('powershell -command "[Environment]::GetEnvironmentVariable('Path','User')"') do set "UPATH=%%A"
-    setx PATH "!UPATH!;!AI_DIR!"
-    echo  [OK] Added to PATH
-)
+echo  Checking user PATH for !AI_DIR!...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:AI_DIR.TrimEnd('\'); $p = [Environment]::GetEnvironmentVariable('Path','User'); if ($null -eq $p) { $p = '' }; $parts = @($p.Split(';') | Where-Object { $_.Trim() -ne '' }); if (@($parts | ForEach-Object { $_.TrimEnd('\') }) -contains $d) { Write-Host '  [OK] Already in user PATH' } else { [Environment]::SetEnvironmentVariable('Path', (($parts + $d) -join ';'), 'User'); Write-Host '  [OK] Added to user PATH' }"
+if errorlevel 1 echo  [FAIL] Could not update the user PATH.
 
 echo.
-echo  Done! Restart your terminal for PATH changes.
+echo  Done^! Restart your terminal for PATH changes.
 echo  Press any key to return to the AI menu.
 pause >nul
 goto ai_select
