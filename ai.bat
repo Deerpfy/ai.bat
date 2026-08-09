@@ -12,7 +12,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ---- identity --------------------------------------------------------------
 set "BF_NAME=AI LAUNCHER"
-set "BF_VERSION=2.3"
+set "BF_VERSION=2.4"
 
 rem Captured here, at the top level, on purpose: inside a "call :label" the %0
 rem token refers to the label, not to the script, so %~dp0 and %~nx0 are only
@@ -32,6 +32,27 @@ rem Where --update-models and [U] download the list from. Point this at any URL
 rem that serves the JSON: raw.githubusercontent.com needs no setup, a GitHub
 rem Pages site works the same way.
 if not defined AI_BAT_MODELS_URL set "AI_BAT_MODELS_URL=https://raw.githubusercontent.com/Deerpfy/ai.bat/main/ai-models.json"
+
+rem ---- Explorer right-click entry --------------------------------------------
+rem A per-user shell verb under HKCU\Software\Classes: no elevation, nothing
+rem machine-wide, and deleting the two keys deletes every trace. Two keys because
+rem Explorer models them separately: the background of a folder, which is also
+rem what the desktop is, and a folder that is clicked directly. [R] on the engine
+rem menu is the switch; see :ctx_menu.
+set "CTX_KEY=Software\Classes\Directory\Background\shell\AILauncher"
+set "CTX_KEY2=Software\Classes\Directory\shell\AILauncher"
+set "CTX_LABEL=AI Launcher"
+set "CTX_SCRIPT=!SCRIPT_DIR!\!BF_SELF!"
+
+rem The icon is drawn once, on install, and cached per user, so this stays a
+rem single file with nothing to ship alongside it. Put an ai-launcher.ico next to
+rem ai.bat, or point AI_BAT_ICON at any .ico or "file.dll,index" resource, to use
+rem your own instead; a supplied icon is never generated over or deleted.
+set "CTX_ICON_GEN=%LOCALAPPDATA%\ai-launcher\ai-launcher.ico"
+if not defined LOCALAPPDATA set "CTX_ICON_GEN=%TEMP%\ai-launcher.ico"
+set "CTX_ICON=!CTX_ICON_GEN!"
+if exist "!SCRIPT_DIR!\ai-launcher.ico" set "CTX_ICON=!SCRIPT_DIR!\ai-launcher.ico"
+if defined AI_BAT_ICON set "CTX_ICON=!AI_BAT_ICON!"
 
 rem ---- safety limits (BAT-201, BAT-202) --------------------------------------
 set "BF_LOOP_CAP=400"
@@ -75,6 +96,7 @@ for %%V in (
   NEW_ROOT NEW_CMD SCAN PARENT AI_DIR PS_SCRIPT
   MDL_COUNT MDL_MORE MDL_STAMP MDL_BAD MDL_UPD_RC BF_MKEYS BF_MDEF BF_MRANGE
   BF_MST BF_UPDATE BF_REFRESH BF_E1 BF_SHOWAX BF_MASK BF_MK BF_MDLLINE
+  BF_CTX_ON BF_CTX_TAG BF_CTX_PATH BF_CTX_HAVE BF_CTX_RC BF_CTXSET
 ) do set "%%V="
 
 rem An endpoint engine hands Anthropic-shaped names to the claude process it
@@ -107,6 +129,7 @@ call :detect_git_bash
 if defined BF_FIXENV goto :env_fix_go
 if defined BF_UPDATE goto :update_flag
 if defined BF_REFRESH goto :refresh_flag
+if defined BF_CTXSET goto :ctx_flag
 
 rem Opt-in launch-time refresh; fires at most once a day and is bounded by the
 rem fetch timeout, so an offline machine stalls briefly once, not every start.
@@ -144,6 +167,7 @@ set "AI_KIND="
 set "AI_NAME="
 set "AI_EDITED="
 set "CMD="
+call :ctx_state
 call :header "Select engine"
 call :sec "ENGINE"
 call :item "1" "Claude"      "Anthropic - full agentic CLI"
@@ -155,12 +179,14 @@ call :item "6" "Custom API"  "any endpoint, claude or codex CLI"
 call :sec "SETUP"
 call :item "F" "Fix environment" "set git-bash + PATH permanently"
 call :item "U" "Update models"   "download the latest model lists"
-call :foot "1-6   [F] fix env   [U] update   [Q] quit" "default 1"
-call :menu_key "123456FUQ" "1"
+call :item "R" "Right-click menu" "!BF_CTX_TAG!"
+call :foot "1-6   [F] env  [U] models  [R] right-click  [Q] quit" "default 1"
+call :menu_key "123456FURQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="F" goto :env_fix
 if "!BF_CH!"=="U" goto :update_models
+if "!BF_CH!"=="R" goto :ctx_menu
 if "!BF_CH!"=="1" goto :claude_flow
 if "!BF_CH!"=="2" goto :codex_flow
 if "!BF_CH!"=="3" goto :gemini_flow
@@ -1752,6 +1778,231 @@ goto :ai_select
 
 
 rem ============================================================================
+rem  EXPLORER RIGHT-CLICK ENTRY
+rem  The global switch for "AI Launcher" in the Windows context menu. On means
+rem  the two HKCU verbs exist, off means they do not; there is no third state and
+rem  no config file, because the registry already is the setting.
+rem
+rem  Explorer substitutes %V with the folder that was clicked, and pushd rather
+rem  than cd is used so a UNC path still becomes the working directory. cmd /s
+rem  strips exactly the outer quote pair and passes the rest through untouched,
+rem  which is what keeps the two inner quoted paths intact.
+rem ============================================================================
+rem Probes the registry instead of caching a flag: the entry can be removed from
+rem outside this script, so the menu has to report what is actually installed.
+rem BF_CTX_HAVE additionally says whether the installed entry points at this copy
+rem of ai.bat - a moved script, or a second vendored copy, leaves it clear.
+:ctx_state
+set "BF_CTX_ON="
+set "BF_CTX_TAG=OFF - not installed"
+set "BF_CTX_PATH="
+set "BF_CTX_HAVE="
+reg query "HKCU\!CTX_KEY!\command" /ve >nul 2>&1 || goto :eof
+set "BF_CTX_ON=1"
+set "BF_CTX_TAG=ON  - desktop and folder menus"
+for /f "tokens=2,*" %%A in ('reg query "HKCU\!CTX_KEY!\command" /ve 2^>nul ^| find "REG_"') do set "BF_CTX_PATH=%%B"
+echo(!BF_CTX_PATH! | find /i "!CTX_SCRIPT!" >nul 2>&1 && set "BF_CTX_HAVE=1"
+goto :eof
+
+:ctx_menu
+call :ctx_state
+call :header "Right-click menu"
+call :sec "WHAT THIS ADDS"
+call :note "An 'AI Launcher' entry in the Windows right-click menu, on the desktop,"
+call :note "on empty space inside a folder, and on a folder itself. Clicking it opens"
+call :note "this launcher with that folder as the working directory."
+echo(
+call :kv "State " "!BF_CTX_TAG!"
+call :kv "Script" "!CTX_SCRIPT!"
+call :kv "Icon  " "!CTX_ICON!"
+call :kv "Keys  " "HKCU\!CTX_KEY!"
+call :kv "      " "HKCU\!CTX_KEY2!"
+if defined BF_CTX_ON if not defined BF_CTX_HAVE call :warn "the installed entry runs a different ai.bat - [E] re-points it at this one"
+echo(
+call :note "Per-user registry only, so no admin rights and no machine-wide change."
+call :note "Windows 11 lists third-party entries under 'Show more options' (Shift+F10)."
+call :sec "SWITCH"
+call :item "E" "Enable"  "install the entry, or re-point it here"
+call :item "D" "Disable" "remove it from Explorer again"
+call :item "B" "Back"    "engine menu"
+call :foot "[E] enable   [D] disable   [B] back" "timeout = back"
+call :menu_key "EDB" "B"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="E" goto :ctx_enable
+if "!BF_CH!"=="D" goto :ctx_disable
+goto :ai_select
+
+:ctx_enable
+echo(
+call :sec "INSTALLING"
+call :ctx_install
+call :hold
+goto :ctx_menu
+
+:ctx_disable
+echo(
+call :sec "REMOVING"
+call :ctx_remove
+call :hold
+goto :ctx_menu
+
+rem --context-menu on|off: the same two operations without the menu (BAT-010).
+:ctx_flag
+if "!BF_CTXSET!"=="off" goto :ctx_flag_off
+call :ctx_install
+set "BF_EXIT=!BF_CTX_RC!"
+goto :cleanup
+:ctx_flag_off
+call :ctx_remove
+set "BF_EXIT=!BF_CTX_RC!"
+goto :cleanup
+
+rem The PowerShell body is written to a temp file so batch quoting never has to
+rem survive a round trip through -Command (same reason as :fetch_models). The
+rem icon is drawn with GDI+ and packed into a multi-size .ico by hand: an ICONDIR
+rem header, one ICONDIRENTRY per size, then the PNG payloads, which Explorer has
+rem accepted inside .ico files since Vista. Any failure there is not fatal - the
+rem entry falls back to the cmd.exe icon and still installs.
+:ctx_install
+set "BF_CTX_RC=0"
+set "PS_SCRIPT=%TEMP%\ai-bat-ctx-%RANDOM%%RANDOM%.ps1"
+echo $ErrorActionPreference = 'Stop' > "!PS_SCRIPT!"
+echo $icon = $env:CTX_ICON >> "!PS_SCRIPT!"
+echo $draw = $true >> "!PS_SCRIPT!"
+echo if ($icon -match ',') { $draw = $false } >> "!PS_SCRIPT!"
+echo if (Test-Path -LiteralPath $icon) { $draw = $false } >> "!PS_SCRIPT!"
+echo if ($draw) { >> "!PS_SCRIPT!"
+echo   try { >> "!PS_SCRIPT!"
+echo     $dir = Split-Path -Parent $icon >> "!PS_SCRIPT!"
+echo     if ($dir -and -not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force } >> "!PS_SCRIPT!"
+echo     Add-Type -AssemblyName System.Drawing >> "!PS_SCRIPT!"
+echo     $sizes = @(256,64,48,32,16) >> "!PS_SCRIPT!"
+echo     $blobs = @() >> "!PS_SCRIPT!"
+echo     foreach ($s in $sizes) { >> "!PS_SCRIPT!"
+echo       $bmp = New-Object Drawing.Bitmap -ArgumentList $s, $s >> "!PS_SCRIPT!"
+echo       $g = [Drawing.Graphics]::FromImage($bmp) >> "!PS_SCRIPT!"
+echo       $g.SmoothingMode = 'AntiAlias' >> "!PS_SCRIPT!"
+echo       $g.TextRenderingHint = 'AntiAliasGridFit' >> "!PS_SCRIPT!"
+echo       $g.Clear([Drawing.Color]::Transparent) >> "!PS_SCRIPT!"
+echo       $m = [single][Math]::Max(1, $s / 16) >> "!PS_SCRIPT!"
+echo       $w = [single]($s - 2 * $m) >> "!PS_SCRIPT!"
+echo       $d = [single][Math]::Max(2, $s / 5) >> "!PS_SCRIPT!"
+echo       $p = New-Object Drawing.Drawing2D.GraphicsPath >> "!PS_SCRIPT!"
+echo       $p.AddArc($m, $m, $d, $d, 180, 90) >> "!PS_SCRIPT!"
+echo       $p.AddArc($m + $w - $d, $m, $d, $d, 270, 90) >> "!PS_SCRIPT!"
+echo       $p.AddArc($m + $w - $d, $m + $w - $d, $d, $d, 0, 90) >> "!PS_SCRIPT!"
+echo       $p.AddArc($m, $m + $w - $d, $d, $d, 90, 90) >> "!PS_SCRIPT!"
+echo       $p.CloseFigure() >> "!PS_SCRIPT!"
+echo       $g.FillPath((New-Object Drawing.SolidBrush -ArgumentList ([Drawing.Color]::FromArgb(255, 26, 26, 30))), $p) >> "!PS_SCRIPT!"
+rem At 16 pixels - the size Explorer actually draws in a context menu - a border
+rem costs a fifth of the width and buys nothing, so that size drops it and spends
+rem the room on the letters instead.
+echo       $ratio = 0.5 >> "!PS_SCRIPT!"
+echo       if ($s -gt 16) { $g.DrawPath((New-Object Drawing.Pen -ArgumentList ([Drawing.Color]::FromArgb(255, 255, 135, 0)), ([single][Math]::Max(1, $s / 24))), $p) } else { $ratio = 0.7 } >> "!PS_SCRIPT!"
+echo       $f = New-Object Drawing.Font -ArgumentList 'Segoe UI', ([single]($s * $ratio)), ([Drawing.FontStyle]::Bold), ([Drawing.GraphicsUnit]::Pixel) >> "!PS_SCRIPT!"
+echo       $sf = New-Object Drawing.StringFormat >> "!PS_SCRIPT!"
+echo       $sf.Alignment = 'Center' >> "!PS_SCRIPT!"
+echo       $sf.LineAlignment = 'Center' >> "!PS_SCRIPT!"
+echo       $box = New-Object Drawing.RectangleF -ArgumentList 0, 0, $s, $s >> "!PS_SCRIPT!"
+echo       $g.DrawString('AI', $f, (New-Object Drawing.SolidBrush -ArgumentList ([Drawing.Color]::FromArgb(255, 255, 150, 45))), $box, $sf) >> "!PS_SCRIPT!"
+echo       $g.Dispose() >> "!PS_SCRIPT!"
+echo       $ms = New-Object IO.MemoryStream >> "!PS_SCRIPT!"
+echo       $bmp.Save($ms, [Drawing.Imaging.ImageFormat]::Png) >> "!PS_SCRIPT!"
+echo       $bmp.Dispose() >> "!PS_SCRIPT!"
+echo       $blobs += ,$ms.ToArray() >> "!PS_SCRIPT!"
+echo     } >> "!PS_SCRIPT!"
+echo     $out = New-Object IO.MemoryStream >> "!PS_SCRIPT!"
+echo     $bw = New-Object IO.BinaryWriter -ArgumentList $out >> "!PS_SCRIPT!"
+echo     $bw.Write([uint16]0) >> "!PS_SCRIPT!"
+echo     $bw.Write([uint16]1) >> "!PS_SCRIPT!"
+echo     $bw.Write([uint16]$sizes.Count) >> "!PS_SCRIPT!"
+echo     $off = 6 + 16 * $sizes.Count >> "!PS_SCRIPT!"
+echo     for ($i = 0; $i -lt $sizes.Count; $i++) { >> "!PS_SCRIPT!"
+echo       $n = $sizes[$i] >> "!PS_SCRIPT!"
+echo       if ($n -ge 256) { $n = 0 } >> "!PS_SCRIPT!"
+echo       $bw.Write([byte]$n) >> "!PS_SCRIPT!"
+echo       $bw.Write([byte]$n) >> "!PS_SCRIPT!"
+echo       $bw.Write([byte]0) >> "!PS_SCRIPT!"
+echo       $bw.Write([byte]0) >> "!PS_SCRIPT!"
+echo       $bw.Write([uint16]1) >> "!PS_SCRIPT!"
+echo       $bw.Write([uint16]32) >> "!PS_SCRIPT!"
+echo       $bw.Write([uint32]$blobs[$i].Length) >> "!PS_SCRIPT!"
+echo       $bw.Write([uint32]$off) >> "!PS_SCRIPT!"
+echo       $off = $off + $blobs[$i].Length >> "!PS_SCRIPT!"
+echo     } >> "!PS_SCRIPT!"
+echo     foreach ($b in $blobs) { $bw.Write($b) } >> "!PS_SCRIPT!"
+echo     $bw.Flush() >> "!PS_SCRIPT!"
+echo     [IO.File]::WriteAllBytes($icon, $out.ToArray()) >> "!PS_SCRIPT!"
+echo     $bw.Dispose() >> "!PS_SCRIPT!"
+echo     Write-Host ('   Icon drawn: ' + $icon) >> "!PS_SCRIPT!"
+echo   } catch { >> "!PS_SCRIPT!"
+echo     $icon = (Join-Path $env:SystemRoot 'System32\cmd.exe') + ',0' >> "!PS_SCRIPT!"
+echo     Write-Host ('   Could not draw the icon, using the cmd.exe one: ' + $_.Exception.Message) >> "!PS_SCRIPT!"
+echo   } >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+rem --dir carries the clicked folder, and it has to: :resolve_root walks up from
+rem the script's own location, never from the current directory, so without it a
+rem right-click in someone else's project would still run the agent in this repo.
+rem The pushd is on top of that so the console itself opens there too, which is
+rem what any relative path typed into [D] or [E] will then resolve against.
+echo $cmd = 'cmd.exe /s /c "pushd "%%V" && "' + $env:CTX_SCRIPT + '" --dir "%%V""' >> "!PS_SCRIPT!"
+echo try { >> "!PS_SCRIPT!"
+echo   foreach ($k in @($env:CTX_KEY, $env:CTX_KEY2)) { >> "!PS_SCRIPT!"
+echo     $rk = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($k) >> "!PS_SCRIPT!"
+echo     $rk.SetValue('', $env:CTX_LABEL) >> "!PS_SCRIPT!"
+echo     $rk.SetValue('Icon', $icon) >> "!PS_SCRIPT!"
+echo     $rk.Close() >> "!PS_SCRIPT!"
+echo     $ck = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($k + '\command') >> "!PS_SCRIPT!"
+echo     $ck.SetValue('', $cmd) >> "!PS_SCRIPT!"
+echo     $ck.Close() >> "!PS_SCRIPT!"
+echo     Write-Host ('   Wrote HKCU\' + $k) >> "!PS_SCRIPT!"
+echo   } >> "!PS_SCRIPT!"
+echo   Write-Host ('   Runs: ' + $cmd) >> "!PS_SCRIPT!"
+echo   exit 0 >> "!PS_SCRIPT!"
+echo } catch { >> "!PS_SCRIPT!"
+echo   Write-Host ('   Failed: ' + $_.Exception.Message) >> "!PS_SCRIPT!"
+echo   exit 1 >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
+if !ERRORLEVEL! NEQ 0 set "BF_CTX_RC=1"
+del "!PS_SCRIPT!" >nul 2>&1
+if "!BF_CTX_RC!"=="1" call :err "could not write the right-click entry - HKCU\Software\Classes may be restricted by policy"
+if "!BF_CTX_RC!"=="0" call :ok "Right-click menu is on. It shows up immediately, no sign-out needed."
+goto :eof
+
+rem The generated icon is deleted with the keys so switching this off leaves
+rem nothing behind; an icon you supplied yourself is never touched, and neither
+rem is the folder unless it is the one this script made and it is now empty.
+:ctx_remove
+set "BF_CTX_RC=0"
+set "PS_SCRIPT=%TEMP%\ai-bat-ctx-%RANDOM%%RANDOM%.ps1"
+echo $ErrorActionPreference = 'Stop' > "!PS_SCRIPT!"
+echo try { >> "!PS_SCRIPT!"
+echo   foreach ($k in @($env:CTX_KEY, $env:CTX_KEY2)) { >> "!PS_SCRIPT!"
+echo     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($k, $false) >> "!PS_SCRIPT!"
+echo     Write-Host ('   Cleared HKCU\' + $k) >> "!PS_SCRIPT!"
+echo   } >> "!PS_SCRIPT!"
+echo   $gen = $env:CTX_ICON_GEN >> "!PS_SCRIPT!"
+echo   if ($gen -and (Test-Path -LiteralPath $gen)) { >> "!PS_SCRIPT!"
+echo     Remove-Item -LiteralPath $gen -Force >> "!PS_SCRIPT!"
+echo     Write-Host ('   Deleted the cached icon') >> "!PS_SCRIPT!"
+echo     $dir = Split-Path -Parent $gen >> "!PS_SCRIPT!"
+echo     if ((Split-Path -Leaf $dir) -eq 'ai-launcher' -and -not (Get-ChildItem -LiteralPath $dir -Force)) { Remove-Item -LiteralPath $dir -Force } >> "!PS_SCRIPT!"
+echo   } >> "!PS_SCRIPT!"
+echo   exit 0 >> "!PS_SCRIPT!"
+echo } catch { >> "!PS_SCRIPT!"
+echo   Write-Host ('   Failed: ' + $_.Exception.Message) >> "!PS_SCRIPT!"
+echo   exit 1 >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
+if !ERRORLEVEL! NEQ 0 set "BF_CTX_RC=1"
+del "!PS_SCRIPT!" >nul 2>&1
+if "!BF_CTX_RC!"=="1" call :err "could not remove the right-click entry - delete HKCU\!CTX_KEY! by hand with regedit"
+if "!BF_CTX_RC!"=="0" call :ok "Right-click menu is off. Nothing is left in the registry."
+goto :eof
+
+
+rem ============================================================================
 rem  MODEL LIST FETCH (Claude)
 rem  The PowerShell body is written to a temp file so batch quoting never has to
 rem  survive a round trip through -Command.
@@ -2345,6 +2596,7 @@ if /i "!BF_A!"=="--print-cmd" goto :args_printcmd
 if /i "!BF_A!"=="--fix-env"   goto :args_fixenv
 if /i "!BF_A!"=="--update-models" goto :args_update
 if /i "!BF_A!"=="--refresh-models" goto :args_refresh
+if /i "!BF_A!"=="--context-menu" goto :args_ctxmenu
 if /i "!BF_A!"=="--ai"      goto :args_ai
 if /i "!BF_A!"=="--dir"     goto :args_dir
 if /i "!BF_A!"=="--model"   goto :args_model
@@ -2395,6 +2647,18 @@ goto :parse_args
 set "BF_REFRESH=1"
 shift
 goto :parse_args
+:args_ctxmenu
+if "%~2"=="" goto :args_ctx_bad
+if /i "%~2"=="on"  set "BF_CTXSET=on"
+if /i "%~2"=="off" set "BF_CTXSET=off"
+if not defined BF_CTXSET goto :args_ctx_bad
+shift
+shift
+goto :parse_args
+:args_ctx_bad
+call :err "--context-menu needs on or off"
+set "BF_EXIT=2"
+goto :eof
 :args_ai
 if "%~2"=="" goto :args_ai_missing
 if /i "%~2"=="claude"      ( set "AI_KIND=claude" & set "AI_NAME=Claude" )
@@ -2599,6 +2863,7 @@ echo(  --print-cmd                print the assembled command, do not run it
 echo(  --fix-env                  set git-bash + PATH permanently, then exit
 echo(  --update-models            download the model list, then exit
 echo(  --refresh-models           rebuild the list from live sources, then exit
+echo(  --context-menu ^<on^|off^>     add or remove the Explorer right-click entry
 echo(  --yes                      skip confirmation prompts
 echo(  --no-color                 disable colored output
 echo(  --no-input                 never prompt; fail instead
@@ -2610,6 +2875,8 @@ echo(  AI_BAT_ROOT         working directory override
 echo(  AI_BAT_ACCENT       SGR params for the accent color, default 38;5;208
 echo(  AI_BAT_MODELS_URL   source URL for model list updates
 echo(  AI_BAT_AUTO_UPDATE  refresh the model list at launch, at most once a day
+echo(  AI_BAT_ICON         icon for the right-click entry: an .ico, or
+echo(                      "file.dll,index". Default: one drawn on install
 echo(  DEEPSEEK_API_KEY    key for the DeepSeek engine; [5] can store it for you
 echo(  AI_BAT_DEEPSEEK_URL override the DeepSeek endpoint, default
 echo(                      https://api.deepseek.com/anthropic
@@ -2629,7 +2896,7 @@ echo(                   Created with defaults on first use.
 echo(
 echo(Exit codes:
 echo(  0   success
-echo(  1   model list update failed
+echo(  1   model list update, or right-click menu change, failed
 echo(  2   usage error
 echo(  3   missing dependency ^(choice.exe unavailable^)
 echo(  4   cancelled by user

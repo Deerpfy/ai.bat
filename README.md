@@ -10,7 +10,7 @@ install beyond the CLI itself.
 
 ```
   +----------------------------------------------------------------------+
-  | AI LAUNCHER 2.3                           Select engine              |
+  | AI LAUNCHER 2.4                           Select engine              |
   +----------------------------------------------------------------------+
    DIR   H:\Projects\myapp
 
@@ -25,9 +25,10 @@ install beyond the CLI itself.
   SETUP
    [F] Fix environment              set git-bash + PATH permanently
    [U] Update models                download the latest model lists
+   [R] Right-click menu             OFF - not installed
 
   ------------------------------------------------------------------------
-   KEYS  1-6   [F] fix env   [U] update   [Q] quit             default 1
+   KEYS  1-6   [F] env  [U] models  [R] right-click  [Q] quit  default 1
 ```
 
 ## Install
@@ -38,6 +39,8 @@ install beyond the CLI itself.
 3. Optional: pick [F] Fix Environment once. It stores `CLAUDE_CODE_GIT_BASH_PATH`
    and adds the folder holding `ai.bat` to your user `PATH`, so `ai` works from
    anywhere.
+4. Optional: pick [R] Right-click menu, then [E], to put **AI Launcher** in the
+   Windows right-click menu. See below.
 
 As a submodule:
 
@@ -75,10 +78,44 @@ Two ways to override:
 The resolved path is shown on the main menu and again on the confirm screen, so you
 can see where the agent will run before it starts.
 
+## The Windows right-click menu
+
+[R] on the engine menu is a global on/off switch for an **AI Launcher** entry in
+Explorer's right-click menu. Turn it on and it appears on the desktop, on empty
+space inside any folder, and on a folder itself; turn it off and it is gone. The
+engine menu always shows which of the two it currently is, because the switch reads
+the registry rather than trusting a saved flag - something else could have removed
+the entry.
+
+Clicking it opens the launcher with that folder as the working directory:
+
+```
+cmd.exe /s /c "pushd "%V" && "C:\tools\ai.bat" --dir "%V""
+```
+
+The `--dir` matters. On a normal start the launcher walks up from its own location
+to find the project root, so without it a right-click in someone else's project
+would still run the agent in the folder `ai.bat` lives in.
+
+- Two per-user keys, `HKCU\Software\Classes\Directory\Background\shell\AILauncher`
+  and `...\Directory\shell\AILauncher`. No admin rights, nothing machine-wide, and
+  [D] deletes both.
+- The icon is drawn on first install and cached in
+  `%LOCALAPPDATA%\ai-launcher\ai-launcher.ico`, so the launcher stays a single file
+  with nothing to ship next to it. Put your own `ai-launcher.ico` beside `ai.bat`,
+  or point `AI_BAT_ICON` at any `.ico` or `"file.dll,index"` resource, to override
+  it; an icon you supplied is never overwritten and never deleted. [D] removes only
+  the cached one.
+- Windows 11 lists third-party entries under **Show more options** (or Shift+F10).
+  That is the shell's own rule for anything that is not a packaged extension.
+- Without the menu: `ai.bat --context-menu on` and `ai.bat --context-menu off`.
+- Moved `ai.bat` after installing? The [R] screen says so, and [E] re-points it.
+
 ## Requirements
 
 - Windows with `cmd.exe` and PowerShell 5+ (preinstalled on Windows 10/11) -
-  PowerShell reads `ai-models.json` and powers [F] fix env and [U] update models
+  PowerShell reads `ai-models.json` and powers [F] fix env, [U] update models and
+  [R] right-click menu
 - At least one agent CLI on `PATH`: `claude`, `codex`, `gemini`, or `agy`
   (the DeepSeek and Custom API engines reuse `claude` or `codex` - see below)
 - Git Bash if you use Claude Code. The script looks in the usual install locations
@@ -307,6 +344,10 @@ No credentials are stored in this repo. They stay in those config directories.
 - [F] Fix Environment writes to your user `PATH` with
   `[Environment]::SetEnvironmentVariable` rather than `setx`, because `setx`
   truncates at 1024 characters and can destroy a long `PATH` without warning.
+- The right-click icon is a multi-size `.ico` assembled by hand from PNG frames -
+  an `ICONDIR`, one `ICONDIRENTRY` per size, then the payloads. Explorer has
+  accepted PNG inside `.ico` since Vista. If drawing it fails for any reason the
+  entry still installs, using the `cmd.exe` icon.
 - Flag names follow the current CLIs. If a vendor renames one, edit the matching
   `set "CMD=..."` line.
 
