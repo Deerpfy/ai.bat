@@ -1,8 +1,9 @@
 @echo off
 rem ============================================================================
 rem  AI LAUNCHER
-rem  Picks an AI CLI (Claude / Codex / Gemini / Antigravity), then exposes that
-rem  engine's own parameters, then shows the assembled command before running.
+rem  Picks an AI CLI (Claude / Codex / Gemini / Antigravity / DeepSeek / any
+rem  endpoint of your own), then exposes that engine's own parameters, then
+rem  shows the assembled command before running.
 rem
 rem  Encoding: ASCII / UTF-8 without BOM.  Line endings: CRLF.
 rem  Exit codes: see :usage
@@ -11,7 +12,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ---- identity --------------------------------------------------------------
 set "BF_NAME=AI LAUNCHER"
-set "BF_VERSION=2.2"
+set "BF_VERSION=2.3"
 
 rem Captured here, at the top level, on purpose: inside a "call :label" the %0
 rem token refers to the label, not to the script, so %~dp0 and %~nx0 are only
@@ -68,10 +69,20 @@ for %%V in (
   GM_MODEL_ID GM_RIDX GM_WT_NAME GM_DIR_LIST GM_PFLAG GM_PROMPT_TEXT
   AG_SESS AG_PERM AG_SB AG_DIR AG_PROMPT AG_CONV AG_DIR_PATH AG_PFLAG
   AG_PROMPT_TEXT
+  AX_SHAPE AX_URL AX_KEY AX_KEYVAR AX_MODEL AX_FAST AX_EFFORT AX_SRC AX_IN
+  AX_COMPACT AX_KEYNOTE AX_PROBE AX_PAUTH AX_PHEAD AX_CLI AX_URLHINT AX_URLSHOW
+  CU_CX
   NEW_ROOT NEW_CMD SCAN PARENT AI_DIR PS_SCRIPT
   MDL_COUNT MDL_MORE MDL_STAMP MDL_BAD MDL_UPD_RC BF_MKEYS BF_MDEF BF_MRANGE
-  BF_MST BF_UPDATE BF_REFRESH
+  BF_MST BF_UPDATE BF_REFRESH BF_E1 BF_SHOWAX BF_MASK BF_MK BF_MDLLINE
 ) do set "%%V="
+
+rem An endpoint engine hands Anthropic-shaped names to the claude process it
+rem starts, so an ai.bat opened from inside that session would inherit them and
+rem quietly point a plain Claude run at that endpoint. AI_BAT_INJECTED marks
+rem those names as this script's doing; without it nothing is touched, so a
+rem hand-configured proxy survives.
+if defined AI_BAT_INJECTED call :ax_reset_env
 
 rem ---- accent: orange.  Override with AI_BAT_ACCENT (e.g. 33 for basic yellow)
 set "BF_ACCENT=38;5;208"
@@ -109,6 +120,9 @@ goto :ai_select
 
 :headless
 if not defined AI_KIND goto :headless_noai
+if "!AI_KIND!"=="deepseek" call :ds_headless_defaults
+if "!AI_KIND!"=="custom" call :cu_headless_defaults
+if defined BF_STOP goto :cleanup
 call :build
 if defined BF_PRINT_ONLY goto :print_cmd
 goto :run
@@ -136,11 +150,13 @@ call :item "1" "Claude"      "Anthropic - full agentic CLI"
 call :item "2" "Codex"       "OpenAI - codex CLI, supports --yolo"
 call :item "3" "Gemini"      "Google - gemini CLI, supports --yolo"
 call :item "4" "Antigravity" "Google - agy terminal agent"
+call :item "5" "DeepSeek"    "DeepSeek - their API, claude CLI"
+call :item "6" "Custom API"  "any endpoint, claude or codex CLI"
 call :sec "SETUP"
 call :item "F" "Fix environment" "set git-bash + PATH permanently"
 call :item "U" "Update models"   "download the latest model lists"
-call :foot "1 2 3 4   [F] fix env   [U] update   [Q] quit" "default 1"
-call :menu_key "1234FUQ" "1"
+call :foot "1-6   [F] fix env   [U] update   [Q] quit" "default 1"
+call :menu_key "123456FUQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="F" goto :env_fix
@@ -149,6 +165,8 @@ if "!BF_CH!"=="1" goto :claude_flow
 if "!BF_CH!"=="2" goto :codex_flow
 if "!BF_CH!"=="3" goto :gemini_flow
 if "!BF_CH!"=="4" goto :antigravity_flow
+if "!BF_CH!"=="5" goto :deepseek_flow
+if "!BF_CH!"=="6" goto :custom_flow
 goto :unreachable
 
 
@@ -238,10 +256,16 @@ call :ask CUSTOM_MODEL "Model ID: "
 if defined CUSTOM_MODEL set "MODEL_FLAG=--model !CUSTOM_MODEL!"
 
 rem --- 2. EFFORT --------------------------------------------------------------
+rem This screen and everything below it are shared with the endpoint engines,
+rem which drive the same claude binary; the headers read from AI_NAME so they
+rem name the engine the user actually picked.
 :cl_effort
-call :header "Claude / Effort"
+call :header "!AI_NAME! / Effort"
 call :sec "EFFORT LEVEL"
-call :item "1" "Default"    "no --effort flag"
+set "BF_E1=no --effort flag"
+if "!AI_KIND!"=="deepseek" set "BF_E1=max, the level DeepSeek's own guide sets"
+if "!AI_KIND!"=="custom" set "BF_E1=no CLAUDE_CODE_EFFORT_LEVEL set"
+call :item "1" "Default"    "!BF_E1!"
 call :item "2" "Low"        "fast, light reasoning"
 call :item "3" "Medium"     "standard tasks"
 call :item "4" "High"       "complex tasks"
@@ -251,17 +275,33 @@ call :foot "1-6   [B] back   [Q] quit" "default 1"
 call :menu_key "123456BQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" if "!AI_KIND!"=="deepseek" goto :ds_fast
+if "!BF_CH!"=="B" if "!AI_KIND!"=="custom" goto :cu_fast
 if "!BF_CH!"=="B" goto :cl_model
 set "EFFORT_FLAG="
+set "AX_EFFORT="
+rem A third-party endpoint takes the level through CLAUDE_CODE_EFFORT_LEVEL, not
+rem through --effort, so the same six keys land in a different carrier. Only
+rem DeepSeek has a documented default worth applying to [1].
+if "!AI_KIND!"=="deepseek" goto :cl_effort_env
+if "!AI_KIND!"=="custom" goto :cl_effort_env
 if "!BF_CH!"=="2" set "EFFORT_FLAG=--effort low"
 if "!BF_CH!"=="3" set "EFFORT_FLAG=--effort medium"
 if "!BF_CH!"=="4" set "EFFORT_FLAG=--effort high"
 if "!BF_CH!"=="5" set "EFFORT_FLAG=--effort xhigh"
 if "!BF_CH!"=="6" set "EFFORT_FLAG=--effort max"
+goto :cl_perm
+:cl_effort_env
+if "!AI_KIND!"=="deepseek" set "AX_EFFORT=max"
+if "!BF_CH!"=="2" set "AX_EFFORT=low"
+if "!BF_CH!"=="3" set "AX_EFFORT=medium"
+if "!BF_CH!"=="4" set "AX_EFFORT=high"
+if "!BF_CH!"=="5" set "AX_EFFORT=xhigh"
+if "!BF_CH!"=="6" set "AX_EFFORT=max"
 
 rem --- 3. PERMISSION MODE -----------------------------------------------------
 :cl_perm
-call :header "Claude / Permissions"
+call :header "!AI_NAME! / Permissions"
 call :sec "PERMISSION MODE"
 call :item "1" "bypassPermissions" "--dangerously-skip-permissions"
 call :item "2" "dontAsk"           "auto-approve, no prompts"
@@ -283,7 +323,7 @@ if "!BF_CH!"=="6" set "PERM_MODE=auto"
 
 rem --- 4. SESSION -------------------------------------------------------------
 :cl_session
-call :header "Claude / Session"
+call :header "!AI_NAME! / Session"
 call :sec "SESSION"
 call :item "1" "New session"          "default"
 call :item "2" "Continue last"        "-c"
@@ -318,7 +358,7 @@ if defined CL_PR set "CL_SESSION= --from-pr !CL_PR!"
 
 rem --- 5. VERBOSE / DEBUG -----------------------------------------------------
 :cl_verbose
-call :header "Claude / Logging"
+call :header "!AI_NAME! / Logging"
 call :sec "VERBOSE / DEBUG"
 call :item "1" "Normal"        "default"
 call :item "2" "Verbose"       "--verbose"
@@ -341,7 +381,7 @@ if defined CL_DBGCATS set "CL_VERBOSE= --debug !CL_DBGCATS!"
 
 rem --- 6. ADDITIONAL DIRECTORIES ----------------------------------------------
 :cl_adddir
-call :header "Claude / Directories"
+call :header "!AI_NAME! / Directories"
 call :sec "ADDITIONAL WORKING DIRECTORIES"
 call :item "1" "None"           "default"
 call :item "2" "Add directories" "--add-dir"
@@ -357,7 +397,7 @@ if defined CL_DIRS set "CL_ADDDIR= --add-dir !CL_DIRS!"
 
 rem --- 7. SYSTEM PROMPT -------------------------------------------------------
 :cl_sysprompt
-call :header "Claude / System prompt"
+call :header "!AI_NAME! / System prompt"
 call :sec "SYSTEM PROMPT"
 call :item "1" "Default"          "use CLAUDE.md"
 call :item "2" "Append text"      "--append-system-prompt"
@@ -383,7 +423,7 @@ if defined CL_REPLACE set "CL_SYSPROMPT= --system-prompt "!CL_REPLACE!""
 
 rem --- 8. MCP -----------------------------------------------------------------
 :cl_mcp
-call :header "Claude / MCP"
+call :header "!AI_NAME! / MCP"
 call :sec "MCP SERVER CONFIG"
 call :item "1" "None"            "default"
 call :item "2" "Load config"     "--mcp-config <file>"
@@ -402,7 +442,7 @@ if "!BF_CH!"=="3" set "CL_MCP= --strict-mcp-config --mcp-config !CL_MCPFILE!"
 
 rem --- 9. TOOL RESTRICTIONS ---------------------------------------------------
 :cl_tools
-call :header "Claude / Tools"
+call :header "!AI_NAME! / Tools"
 call :sec "TOOL RESTRICTIONS"
 call :item "1" "All tools"      "default"
 call :item "2" "Specific only"  "--tools <list>"
@@ -422,7 +462,7 @@ if defined CL_TOOLLIST set "CL_TOOLS= --tools "!CL_TOOLLIST!""
 
 rem --- 10. CHROME -------------------------------------------------------------
 :cl_chrome
-call :header "Claude / Browser"
+call :header "!AI_NAME! / Browser"
 call :sec "CHROME INTEGRATION"
 call :item "1" "Default" "no flag"
 call :item "2" "Enable"  "--chrome"
@@ -438,7 +478,7 @@ if "!BF_CH!"=="3" set "CL_CHROME= --no-chrome"
 
 rem --- 11. GIT WORKTREE -------------------------------------------------------
 :cl_worktree
-call :header "Claude / Worktree"
+call :header "!AI_NAME! / Worktree"
 call :sec "GIT WORKTREE"
 call :item "1" "None"            "work in this checkout"
 call :item "2" "New worktree"    "-w, isolated repo copy"
@@ -457,13 +497,20 @@ if "!BF_CH!"=="3" set "CL_WORKTREE=!CL_WORKTREE! --tmux"
 
 rem --- 12. STARTUP MODE -------------------------------------------------------
 :cl_startup
-call :header "Claude / Startup"
+call :header "!AI_NAME! / Startup"
 call :sec "STARTUP MODE"
 call :item "1" "Normal"    "hooks, plugins, CLAUDE.md as usual"
 call :item "2" "Bare"      "--bare, fastest start"
 call :item "3" "Safe mode" "--safe-mode, all customizations off"
+if "!AI_KIND!"=="deepseek" goto :cl_startup_axnote
+if "!AI_KIND!"=="custom" goto :cl_startup_axnote
 call :note "Bare skips hooks/plugins/CLAUDE.md and needs ANTHROPIC_API_KEY."
 call :note "Account OAuth will NOT work under --bare."
+goto :cl_startup_keys
+:cl_startup_axnote
+call :note "Bare skips hooks/plugins/CLAUDE.md. Your key travels as"
+call :note "ANTHROPIC_AUTH_TOKEN, so authentication still works under --bare."
+:cl_startup_keys
 call :foot "1 2 3   [B] back   [Q] quit" "default 1"
 call :menu_key "123BQ" "1"
 if defined BF_STOP goto :cleanup
@@ -475,7 +522,7 @@ if "!BF_CH!"=="3" set "CL_STARTUP= --safe-mode"
 
 rem --- 13. IDE ----------------------------------------------------------------
 :cl_ide
-call :header "Claude / IDE"
+call :header "!AI_NAME! / IDE"
 call :sec "IDE INTEGRATION"
 call :item "1" "None"         "default"
 call :item "2" "Auto-connect" "--ide, VS Code / JetBrains"
@@ -517,6 +564,7 @@ call :foot "1-5   [B] back   [Q] quit" "default 1"
 call :menu_key "12345BQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" if "!AI_KIND!"=="custom" goto :cu_model
 if "!BF_CH!"=="B" goto :ai_select
 set "CX_BASE=codex"
 if "!BF_CH!"=="2" set "CX_BASE=codex resume"
@@ -524,6 +572,9 @@ if "!BF_CH!"=="3" set "CX_BASE=codex resume --last"
 if "!BF_CH!"=="4" set "CX_BASE=codex fork"
 if "!BF_CH!"=="5" set "CX_BASE=codex fork --last"
 set "CX_NEW=!BF_CH!"
+rem A custom endpoint already has its model; the codex model menu would only
+rem offer OpenAI ids that endpoint has never heard of.
+if "!AI_KIND!"=="custom" goto :cx_appr
 
 rem Menu entries come from ai-models.json (engine tag "codex") and are reread on
 rem every render. Refresh that file from the picker list codex itself caches in
@@ -573,6 +624,7 @@ call :foot "1-5   [B] back   [Q] quit" "default 1"
 call :menu_key "12345BQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" if "!AI_KIND!"=="custom" goto :cx_session
 if "!BF_CH!"=="B" goto :cx_model
 set "CX_APPR="
 if "!BF_CH!"=="2" set "CX_APPR= --yolo"
@@ -871,6 +923,588 @@ goto :confirm
 
 
 rem ============================================================================
+rem ============================================================================
+rem  ENDPOINT ENGINES: DEEPSEEK AND CUSTOM API
+rem  Neither ships a CLI of its own. Both point a CLI you already have at a
+rem  different endpoint - the claude binary at an Anthropic Messages API, or the
+rem  codex binary at an OpenAI Responses API - so everything after the endpoint
+rem  questions is the Claude or the Codex flow itself, not a copy of it.
+rem
+rem  Both fill the same variables, so one key screen, one applier, one header
+rem  block and one effort branch serve both:
+rem    AX_SHAPE   anthropic | openai - which CLI and which wire format
+rem    AX_URL     base URL of the endpoint
+rem    AX_KEY     the key, in memory only
+rem    AX_KEYVAR  environment variable the key is remembered under
+rem    AX_MODEL   main model id       AX_FAST  cheap model id (anthropic only)
+rem    AX_EFFORT  CLAUDE_CODE_EFFORT_LEVEL value (anthropic only)
+rem    AX_PROBE   URL the [T] key check GETs, with AX_PAUTH as its auth style
+rem  Switching engines from the menu clears all of them (:ax_reset_choices), so
+rem  one endpoint's URL, key or model can never leak into another. A key saved
+rem  to the environment is re-read on entry, so only pasted ones are forgotten.
+rem
+rem  The key reaches the environment only at launch (:ax_apply_env), never while
+rem  the menus are up: these names decide how every agent in this console
+rem  authenticates, and the flow can still be abandoned with [B] or [Q].
+rem ============================================================================
+rem ============================================================================
+:deepseek_flow
+set "AI_KIND=deepseek"
+set "AI_NAME=DeepSeek"
+call :ax_reset_choices
+set "AX_SHAPE=anthropic"
+set "AX_KEYVAR=DEEPSEEK_API_KEY"
+set "AX_URL=https://api.deepseek.com/anthropic"
+if defined AI_BAT_DEEPSEEK_URL set "AX_URL=!AI_BAT_DEEPSEEK_URL!"
+set "AX_MODEL=deepseek-v4-pro"
+set "AX_FAST=deepseek-v4-flash"
+rem DeepSeek's own Claude Code guide sets this window; nothing else does.
+set "AX_COMPACT=786432"
+rem The model list is served in OpenAI shape at the bare host, not under the
+rem /anthropic path the agent itself talks to.
+set "AX_PROBE=https://api.deepseek.com/models"
+set "AX_PAUTH=bearer"
+set "AX_KEYNOTE=Keys come from https://platform.deepseek.com/api_keys"
+call :ax_pick_up_key
+goto :ax_key
+
+
+rem ============================================================================
+rem  CUSTOM API FLOW (any endpoint, driven by the claude or the codex CLI)
+rem ============================================================================
+:custom_flow
+set "AI_KIND=custom"
+set "AI_NAME=Custom API"
+call :ax_reset_choices
+set "AX_KEYVAR=AI_BAT_CUSTOM_KEY"
+set "AX_SHAPE=anthropic"
+if /i "!AI_BAT_CUSTOM_BACKEND!"=="codex" set "AX_SHAPE=openai"
+if defined AI_BAT_CUSTOM_URL set "AX_URL=!AI_BAT_CUSTOM_URL!"
+if defined AI_BAT_CUSTOM_MODEL set "AX_MODEL=!AI_BAT_CUSTOM_MODEL!"
+set "AX_KEYNOTE=The key is sent to the endpoint above and to nowhere else."
+call :ax_pick_up_key
+
+rem --- 0. WHICH CLI -----------------------------------------------------------
+:cu_backend
+call :header "Custom API / CLI"
+call :sec "WHICH CLI DRIVES IT"
+call :item "1" "Claude Code" "endpoint speaks the Anthropic Messages API"
+call :item "2" "Codex"       "endpoint speaks the OpenAI Responses API"
+call :note "Both are a CLI you already have, pointed somewhere else."
+call :note "A gateway that only offers OpenAI chat completions fits neither:"
+call :note "codex needs the Responses API, claude needs the Messages API."
+call :foot "1 2   [B] back   [Q] quit" "default 1"
+call :menu_key "12BQ" "1"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :ai_select
+set "AX_SHAPE=anthropic"
+if "!BF_CH!"=="2" set "AX_SHAPE=openai"
+
+rem --- 1. ENDPOINT ------------------------------------------------------------
+:cu_url
+call :cu_shape_labels
+call :header "Custom API / Endpoint"
+call :sec "CURRENT"
+call :kv "CLI     " "!AX_CLI!"
+call :kv "Base URL" "!AX_URLSHOW!"
+call :sec "BASE URL"
+call :item "1" "Enter a base URL" "!AX_URLHINT!"
+call :item "2" "Keep current"     "!AX_URLSHOW!"
+call :note "The CLI appends its own path, so give the root the provider"
+call :note "documents: https://api.example.com/v1 or https://gw.example.com/anthropic"
+set "BF_MDEF=1"
+if defined AX_URL set "BF_MDEF=2"
+call :foot "1 2   [B] back   [Q] quit" "default !BF_MDEF!"
+call :menu_key "12BQ" "!BF_MDEF!"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :cu_backend
+if "!BF_CH!"=="2" goto :cu_url_check
+call :opnote
+call :ask AX_IN "Base URL: "
+if not defined AX_IN goto :cu_url
+set "AX_URL=!AX_IN!"
+set "AX_IN="
+call :cu_shape_labels
+:cu_url_check
+if not defined AX_URL goto :cu_url_missing
+rem Delayed expansion, so an operator inside the typed URL is compared, not run.
+echo(!AX_URL! | findstr /i /r /c:"^https*://." >nul 2>&1 || goto :cu_url_bad
+goto :ax_key
+:cu_url_missing
+call :err "the endpoint needs a base URL - pick [1] and type one"
+call :hold
+goto :cu_url
+:cu_url_bad
+call :err "that does not look like a URL - it should start with http:// or https://"
+call :hold
+goto :cu_url
+
+rem Everything that differs between the two CLIs, in one place. Rerun whenever
+rem the shape or the URL changes.
+:cu_shape_labels
+set "AX_URLSHOW=not set yet"
+if defined AX_URL set "AX_URLSHOW=!AX_URL!"
+set "AX_CLI=claude"
+set "AX_URLHINT=root that serves /v1/messages"
+set "AX_PROBE=!AX_URL!/v1/models"
+set "AX_PAUTH=anthropic"
+if "!AX_SHAPE!"=="anthropic" goto :eof
+set "AX_CLI=codex"
+set "AX_URLHINT=root that serves /responses, usually ends in /v1"
+set "AX_PROBE=!AX_URL!/models"
+set "AX_PAUTH=bearer"
+goto :eof
+
+
+rem ============================================================================
+rem  API KEY (shared by both endpoint engines)
+rem ============================================================================
+:ax_key
+call :mask_key "!AX_KEY!"
+call :header "!AI_NAME! / API key"
+call :sec "CURRENT"
+call :kv "Endpoint" "!AX_URL!"
+call :kv "Key     " "!BF_MASK!"
+call :kv "Source  " "!AX_SRC!"
+call :sec "KEY SOURCE"
+call :item "1" "Paste a key"      "kept for this run only"
+call :item "2" "Paste and save"   "also stores !AX_KEYVAR! for your user"
+call :item "3" "Continue"         "use the key shown above"
+call :item "T" "Test the key"     "one GET for the endpoint's model list"
+call :item "X" "Forget saved key" "clears the stored !AX_KEYVAR!"
+call :note "!AX_KEYNOTE!"
+call :note "A pasted key is visible while you type it; the next screen clears."
+call :foot "1 2 3   [T] test   [X] forget   [B] back   [Q] quit" "default 3"
+call :menu_key "123TXBQ" "3"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" if "!AI_KIND!"=="custom" goto :cu_url
+if "!BF_CH!"=="B" goto :ai_select
+if "!BF_CH!"=="T" goto :ax_key_test
+if "!BF_CH!"=="X" goto :ax_key_forget
+if "!BF_CH!"=="1" goto :ax_key_paste
+if "!BF_CH!"=="2" goto :ax_key_paste_save
+if not defined AX_KEY goto :ax_key_none
+if "!AI_KIND!"=="custom" goto :cu_model
+goto :ds_model
+
+:ax_key_none
+call :err "no API key yet - pick [1] or [2] and paste one"
+call :hold
+goto :ax_key
+
+:ax_key_paste
+call :ask AX_IN "API key: "
+if not defined AX_IN goto :ax_key
+set "AX_KEY=!AX_IN!"
+set "AX_IN="
+set "AX_SRC=pasted, this run only"
+goto :ax_key
+
+:ax_key_paste_save
+call :ask AX_IN "API key: "
+if not defined AX_IN goto :ax_key
+set "AX_KEY=!AX_IN!"
+set "AX_IN="
+set "AX_SRC=pasted, this run only"
+call :key_save
+goto :ax_key
+
+:ax_key_test
+echo(
+call :sec "KEY CHECK"
+if not defined AX_KEY goto :ax_key_test_nokey
+if not defined AX_URL goto :ax_key_test_nourl
+call :ax_probe "   The endpoint answered. Models it lists:"
+goto :ax_key_test_done
+:ax_key_test_nokey
+call :note "No key to test yet - paste one with [1] or [2] first."
+goto :ax_key_test_done
+:ax_key_test_nourl
+call :note "No endpoint to test against yet."
+:ax_key_test_done
+call :hold
+goto :ax_key
+
+rem Written through the environment rather than into the command line, so the key
+rem never appears in a process argument list. setx is avoided here for the same
+rem reason as in :env_fix - see the note there.
+:key_save
+echo(
+call :info "Saving !AX_KEYVAR! to your user environment..."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Environment]::SetEnvironmentVariable($env:AX_KEYVAR, $env:AX_KEY, 'User')"
+if !ERRORLEVEL! NEQ 0 goto :key_save_fail
+set "!AX_KEYVAR!=!AX_KEY!"
+set "AX_SRC=saved as !AX_KEYVAR! for your user"
+call :ok "Saved. New terminals pick it up without asking again."
+call :hold
+goto :eof
+:key_save_fail
+call :err "could not write !AX_KEYVAR! - the key still works for this run"
+set "AX_SRC=pasted, this run only - saving failed"
+call :hold
+goto :eof
+
+:ax_key_forget
+echo(
+call :info "Removing the stored !AX_KEYVAR!..."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Environment]::SetEnvironmentVariable($env:AX_KEYVAR, $null, 'User')"
+if !ERRORLEVEL! NEQ 0 call :err "could not clear it - remove !AX_KEYVAR! via System Properties / Environment Variables"
+set "!AX_KEYVAR!="
+set "AX_KEY="
+set "AX_SRC=none"
+call :ok "Stored key cleared. This run has no key until you paste one."
+call :hold
+goto :ax_key
+
+
+rem ============================================================================
+rem  CUSTOM API: MODEL
+rem ============================================================================
+:cu_model
+call :header "Custom API / Model"
+call :load_models custom
+call :sec "MODEL"
+for /l %%i in (1,1,!MDL_COUNT!) do call :item "%%i" "!MDL_%%i!" "!MDD_%%i!"
+call :item "C" "Enter a model id" "asks the endpoint for its list first"
+call :item "S" "Keep current"     "!AX_MODEL!"
+call :note "Entries under the custom section of ai-models.json show up here."
+if defined MDL_BAD call :note "ai-models.json has a JSON error - fix it or re-download via [U]."
+if defined MDL_MORE call :note "Only the first 9 custom entries in ai-models.json are shown."
+set "BF_MKEYS="
+for /l %%i in (1,1,!MDL_COUNT!) do set "BF_MKEYS=!BF_MKEYS!%%i"
+set "BF_MDEF=C"
+if not "!MDL_COUNT!"=="0" set "BF_MDEF=1"
+if defined AX_MODEL set "BF_MDEF=S"
+set "BF_MRANGE=1-!MDL_COUNT!   "
+if "!MDL_COUNT!"=="1" set "BF_MRANGE=1   "
+if "!MDL_COUNT!"=="0" set "BF_MRANGE="
+call :foot "!BF_MRANGE![C] enter id   [S] keep   [B] back   [Q] quit" "default !BF_MDEF!"
+call :menu_key "!BF_MKEYS!CSBQ" "!BF_MDEF!"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :ax_key
+if "!BF_CH!"=="C" goto :cu_custom_model
+if "!BF_CH!"=="S" goto :cu_model_done
+for %%i in (!BF_CH!) do set "AX_MODEL=!MDL_%%i!"
+goto :cu_model_done
+
+:cu_custom_model
+call :header "Custom API / Model / Enter id"
+call :sec "AVAILABLE MODELS"
+echo(
+call :ax_probe "   Models this endpoint lists:"
+echo(
+if defined AX_MODEL call :note "Blank entry keeps !AX_MODEL!."
+echo(
+call :ask AX_IN "Model id: "
+if defined AX_IN set "AX_MODEL=!AX_IN!"
+set "AX_IN="
+
+:cu_model_done
+if not defined AX_MODEL goto :cu_model_missing
+rem codex takes the model as a flag, claude takes it as ANTHROPIC_MODEL.
+if "!AX_SHAPE!"=="openai" goto :cx_session
+goto :cu_fast
+:cu_model_missing
+call :err "the endpoint needs a model id - pick one or enter it with [C]"
+call :hold
+goto :cu_model
+
+rem Claude Code reaches for a cheaper model for subagents and background work.
+rem Left unset it would ask a non-Anthropic endpoint for a Claude name, so it is
+rem always pinned - to the main model unless the endpoint has something cheaper.
+:cu_fast
+call :header "Custom API / Fast model"
+call :sec "FAST AND SUBAGENT MODEL"
+call :item "1" "Same as main model" "!AX_MODEL!"
+call :item "C" "Enter a model id"   "a cheaper tier, if there is one"
+call :kv "Current" "!AX_FAST!"
+call :note "Used for the haiku slot, subagents and background work."
+call :foot "1   [C] enter id   [B] back   [Q] quit" "default 1"
+call :menu_key "1CBQ" "1"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :cu_model
+if "!BF_CH!"=="1" set "AX_FAST=!AX_MODEL!"
+if not "!BF_CH!"=="C" goto :cl_effort
+call :ask AX_IN "Fast model id: "
+if defined AX_IN set "AX_FAST=!AX_IN!"
+set "AX_IN="
+goto :cl_effort
+
+
+rem ============================================================================
+rem  DEEPSEEK: MODEL
+rem  Entries come from ai-models.json (engine tag "deepseek"), same file and same
+rem  rules as the Claude and Codex menus.
+rem ============================================================================
+:ds_model
+call :header "DeepSeek / Model"
+call :load_models deepseek
+call :sec "MODEL"
+for /l %%i in (1,1,!MDL_COUNT!) do call :item "%%i" "!MDL_%%i!" "!MDD_%%i!"
+call :item "C" "Custom model id" "lists models available on your key"
+call :item "S" "Keep current"    "!AX_MODEL!"
+call :note "Sent as ANTHROPIC_MODEL; the endpoint has no --model flag."
+call :note "Edit ai-models.json next to !BF_SELF! to change this list."
+if defined MDL_BAD call :note "ai-models.json has a JSON error - fix it or re-download via [U]."
+if defined MDL_MORE call :note "Only the first 9 deepseek entries in ai-models.json are shown."
+if "!MDL_COUNT!"=="0" call :note "No deepseek entries in ai-models.json - pick [C] or [S]."
+set "BF_MKEYS="
+for /l %%i in (1,1,!MDL_COUNT!) do set "BF_MKEYS=!BF_MKEYS!%%i"
+set "BF_MDEF=1"
+if "!MDL_COUNT!"=="0" set "BF_MDEF=S"
+set "BF_MRANGE=1-!MDL_COUNT!   "
+if "!MDL_COUNT!"=="1" set "BF_MRANGE=1   "
+if "!MDL_COUNT!"=="0" set "BF_MRANGE="
+call :foot "!BF_MRANGE![C] custom   [S] keep   [B] back   [Q] quit" "default !BF_MDEF!"
+call :menu_key "!BF_MKEYS!CSBQ" "!BF_MDEF!"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :ax_key
+if "!BF_CH!"=="S" goto :ds_fast
+if "!BF_CH!"=="C" goto :ds_custom_model
+for %%i in (!BF_CH!) do set "AX_MODEL=!MDL_%%i!"
+goto :ds_fast
+
+:ds_custom_model
+call :header "DeepSeek / Model / Custom"
+call :sec "AVAILABLE MODELS"
+echo(
+call :ax_probe "   Models available on your key:"
+echo(
+call :note "Blank entry keeps !AX_MODEL!."
+echo(
+call :ask AX_IN "Model id: "
+if defined AX_IN set "AX_MODEL=!AX_IN!"
+set "AX_IN="
+
+rem --- 2. FAST MODEL ----------------------------------------------------------
+rem Claude Code reaches for a cheaper model for subagents and background work.
+rem Left unset it would ask DeepSeek for a Claude name, so it is always pinned.
+:ds_fast
+call :header "DeepSeek / Fast model"
+call :sec "FAST AND SUBAGENT MODEL"
+call :item "1" "deepseek-v4-flash" "the tier DeepSeek recommends here"
+call :item "2" "Same as main"      "!AX_MODEL!"
+call :item "C" "Custom model id"   "type any id"
+call :kv "Current" "!AX_FAST!"
+call :foot "1 2   [C] custom   [B] back   [Q] quit" "default 1"
+call :menu_key "12CBQ" "1"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :ds_model
+if "!BF_CH!"=="1" set "AX_FAST=deepseek-v4-flash"
+if "!BF_CH!"=="2" set "AX_FAST=!AX_MODEL!"
+if not "!BF_CH!"=="C" goto :cl_effort
+call :ask AX_IN "Fast model id: "
+if defined AX_IN set "AX_FAST=!AX_IN!"
+set "AX_IN="
+
+rem --- 3. EVERYTHING ELSE -----------------------------------------------------
+rem Effort, permissions, session, logging, directories, system prompt, MCP,
+rem tools, browser, worktree, startup and IDE are claude CLI features and behave
+rem the same against DeepSeek, so the Claude flow takes it from here.
+goto :cl_effort
+
+
+rem ============================================================================
+rem  ENDPOINT ENGINE HELPERS
+rem ============================================================================
+rem Everything the endpoint engines own, cleared on entry to either of them.
+:ax_reset_choices
+for %%V in (
+  AX_SHAPE AX_URL AX_KEY AX_KEYVAR AX_MODEL AX_FAST AX_EFFORT AX_SRC
+  AX_COMPACT AX_KEYNOTE AX_PROBE AX_PAUTH AX_CLI AX_URLHINT AX_URLSHOW AX_IN
+  MODEL_FLAG EFFORT_FLAG PERM_MODE
+  CL_SESSION CL_VERBOSE CL_ADDDIR CL_SYSPROMPT CL_MCP CL_TOOLS CL_CHROME
+  CL_WORKTREE CL_STARTUP CL_IDE
+  CX_MODEL CX_APPR CX_SEARCH CX_CD CX_PROMPT CX_NEW
+) do set "%%V="
+set "CLAUDE_CONFIG_DIR="
+set "CX_BASE=codex"
+goto :eof
+
+rem A saved key is the one thing that survives switching engines, because it
+rem lives in the environment rather than in this run. Read by name, spelled out
+rem per engine: resolving a variable whose name is itself in a variable needs a
+rem second expansion pass, and that pass would also re-parse the key.
+:ax_pick_up_key
+set "AX_SRC=none"
+if "!AX_KEYVAR!"=="DEEPSEEK_API_KEY" call :ax_pick_deepseek
+if "!AX_KEYVAR!"=="AI_BAT_CUSTOM_KEY" call :ax_pick_custom
+goto :eof
+:ax_pick_deepseek
+if not defined DEEPSEEK_API_KEY goto :eof
+set "AX_KEY=!DEEPSEEK_API_KEY!"
+set "AX_SRC=DEEPSEEK_API_KEY, already in your environment"
+goto :eof
+:ax_pick_custom
+if not defined AI_BAT_CUSTOM_KEY goto :eof
+set "AX_KEY=!AI_BAT_CUSTOM_KEY!"
+set "AX_SRC=AI_BAT_CUSTOM_KEY, already in your environment"
+goto :eof
+
+rem %1 = the secret. Never prints more of it than its ends.
+:mask_key
+set "BF_MASK=not set - paste one below"
+set "BF_MK=%~1"
+if not defined BF_MK goto :eof
+set "BF_MASK=!BF_MK:~0,6!****!BF_MK:~-4!"
+set "BF_MK="
+goto :eof
+
+rem Applied at launch only. AI_BAT_INJECTED is the marker the next ai.bat in
+rem this console looks for; see the clear block at the top of the script.
+:ax_apply_env
+if not defined AX_KEY call :ax_pick_up_key
+if not defined AX_KEY goto :ax_apply_nokey
+if not defined AX_URL goto :ax_apply_nourl
+if not defined AX_MODEL goto :ax_apply_nomodel
+if "!AX_SHAPE!"=="openai" goto :ax_apply_openai
+if not defined AX_FAST set "AX_FAST=!AX_MODEL!"
+set "ANTHROPIC_BASE_URL=!AX_URL!"
+set "ANTHROPIC_AUTH_TOKEN=!AX_KEY!"
+rem An Anthropic key left in the environment would go out as an x-api-key header
+rem alongside the bearer token, so it is dropped for this run.
+set "ANTHROPIC_API_KEY="
+set "ANTHROPIC_MODEL=!AX_MODEL!"
+set "ANTHROPIC_DEFAULT_OPUS_MODEL=!AX_MODEL!"
+set "ANTHROPIC_DEFAULT_SONNET_MODEL=!AX_MODEL!"
+set "ANTHROPIC_DEFAULT_HAIKU_MODEL=!AX_FAST!"
+set "CLAUDE_CODE_SUBAGENT_MODEL=!AX_FAST!"
+if defined AX_EFFORT set "CLAUDE_CODE_EFFORT_LEVEL=!AX_EFFORT!"
+if defined AX_COMPACT set "CLAUDE_CODE_AUTO_COMPACT_WINDOW=!AX_COMPACT!"
+set "AI_BAT_INJECTED=1"
+goto :ax_apply_done
+:ax_apply_openai
+rem codex reads the key itself, out of the variable named by the -c overrides
+rem :build_codex writes, so that one name is the whole handover. Nothing
+rem Anthropic-shaped is set, so nothing needs undoing on the next run either.
+set "!AX_KEYVAR!=!AX_KEY!"
+:ax_apply_done
+rem The key is carried by the names above from here on; no reason for the
+rem launched agent to also see it under this script's own name.
+set "AX_KEY="
+goto :eof
+:ax_apply_nokey
+call :err "no API key for !AI_NAME! - set !AX_KEYVAR!, or pick the engine from the menu and paste one"
+set "BF_EXIT=5"
+set "BF_STOP=1"
+goto :eof
+:ax_apply_nourl
+call :err "no endpoint URL for !AI_NAME! - set AI_BAT_CUSTOM_URL, or enter one from the menu"
+set "BF_EXIT=5"
+set "BF_STOP=1"
+goto :eof
+:ax_apply_nomodel
+call :err "no model id for !AI_NAME! - pass --model, set AI_BAT_CUSTOM_MODEL, or pick one from the menu"
+set "BF_EXIT=5"
+set "BF_STOP=1"
+goto :eof
+
+rem Undoes exactly what :ax_apply_env injected, nothing else.
+:ax_reset_env
+for %%V in (
+  ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL
+  ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL
+  ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL
+  CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_AUTO_COMPACT_WINDOW AI_BAT_INJECTED
+) do set "%%V="
+goto :eof
+
+rem Shown on the launch screen, where the command line alone would not say which
+rem endpoint or model is really in play.
+:ax_launch_note
+call :info "Endpoint !AX_URL! - model !AX_MODEL!"
+goto :eof
+
+rem GET AX_PROBE with AX_PAUTH's auth style and report what came back. House
+rem temp-ps1 pattern, see :fetch_models; URL, key and heading travel in the
+rem environment, so nothing typed by the user lands on a command line.
+rem %1 = heading printed above the list on success.
+:ax_probe
+if not defined AX_KEY goto :ax_probe_nokey
+if not defined AX_PROBE goto :ax_probe_nourl
+set "AX_PHEAD=%~1"
+set "PS_SCRIPT=%TEMP%\ai-bat-probe-%RANDOM%%RANDOM%.ps1"
+echo $ErrorActionPreference = 'Stop' > "!PS_SCRIPT!"
+echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 >> "!PS_SCRIPT!"
+echo $h = @{} >> "!PS_SCRIPT!"
+echo if ($env:AX_PAUTH -eq 'anthropic') { $h['x-api-key'] = $env:AX_KEY; $h['anthropic-version'] = '2023-06-01' } else { $h['Authorization'] = 'Bearer ' + $env:AX_KEY } >> "!PS_SCRIPT!"
+echo try { >> "!PS_SCRIPT!"
+echo     $r = Invoke-RestMethod -Uri $env:AX_PROBE -Headers $h -TimeoutSec 15 >> "!PS_SCRIPT!"
+echo     Write-Host $env:AX_PHEAD >> "!PS_SCRIPT!"
+echo     Write-Host '' >> "!PS_SCRIPT!"
+echo     $ids = @(@($r.data) ^| ForEach-Object { [string]$_.id } ^| Where-Object { $_ } ^| Sort-Object) >> "!PS_SCRIPT!"
+echo     if ($ids) { $ids ^| ForEach-Object { Write-Host ('     ' + $_) } } >> "!PS_SCRIPT!"
+echo     if (-not $ids) { Write-Host '     it answered, but listed no models' } >> "!PS_SCRIPT!"
+echo     exit 0 >> "!PS_SCRIPT!"
+echo } catch { >> "!PS_SCRIPT!"
+echo     $code = 0 >> "!PS_SCRIPT!"
+echo     if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } >> "!PS_SCRIPT!"
+echo     if ($code -eq 401 -or $code -eq 403) { Write-Host ('   ' + $code + ' - the endpoint answered and rejected this key.') } >> "!PS_SCRIPT!"
+echo     if ($code -eq 404) { Write-Host '   404 - reachable, but it serves no model list at that path.' } >> "!PS_SCRIPT!"
+echo     if ($code -eq 404) { Write-Host '         Normal for many gateways; it says nothing about the key.' } >> "!PS_SCRIPT!"
+echo     if ($code -ne 0 -and $code -ne 401 -and $code -ne 403 -and $code -ne 404) { Write-Host ('   HTTP ' + $code + ' - ' + $_.Exception.Message) } >> "!PS_SCRIPT!"
+echo     if ($code -eq 0) { Write-Host ('   No answer: ' + $_.Exception.Message) } >> "!PS_SCRIPT!"
+echo     exit 1 >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
+set "AX_PHEAD="
+del "!PS_SCRIPT!" >nul 2>&1
+goto :eof
+:ax_probe_nokey
+call :note "No key set, so the endpoint cannot be queried."
+goto :eof
+:ax_probe_nourl
+call :note "No endpoint set, so there is nothing to query."
+goto :eof
+
+rem --ai deepseek / --ai custom skip the menus, so the values the screens would
+rem have filled come from the environment here instead.
+:ds_headless_defaults
+set "AX_SHAPE=anthropic"
+set "AX_KEYVAR=DEEPSEEK_API_KEY"
+set "AX_URL=https://api.deepseek.com/anthropic"
+if defined AI_BAT_DEEPSEEK_URL set "AX_URL=!AI_BAT_DEEPSEEK_URL!"
+if not defined AX_MODEL set "AX_MODEL=deepseek-v4-pro"
+if not defined AX_FAST set "AX_FAST=deepseek-v4-flash"
+if not defined AX_EFFORT set "AX_EFFORT=max"
+set "AX_COMPACT=786432"
+call :ax_pick_up_key
+goto :eof
+
+rem Checked here rather than at launch, because the endpoint is part of the
+rem command line for codex: --print-cmd would otherwise hand back a half-written
+rem provider override that looks runnable.
+:cu_headless_defaults
+set "AX_KEYVAR=AI_BAT_CUSTOM_KEY"
+set "AX_SHAPE=anthropic"
+if /i "!AI_BAT_CUSTOM_BACKEND!"=="codex" set "AX_SHAPE=openai"
+if not defined AX_URL if defined AI_BAT_CUSTOM_URL set "AX_URL=!AI_BAT_CUSTOM_URL!"
+if not defined AX_MODEL if defined AI_BAT_CUSTOM_MODEL set "AX_MODEL=!AI_BAT_CUSTOM_MODEL!"
+if not defined CX_BASE set "CX_BASE=codex"
+call :ax_pick_up_key
+if not defined AX_URL goto :cu_headless_nourl
+if not defined AX_MODEL goto :cu_headless_nomodel
+goto :eof
+:cu_headless_nourl
+call :err "--ai custom needs the endpoint base URL in AI_BAT_CUSTOM_URL"
+set "BF_EXIT=5"
+set "BF_STOP=1"
+goto :eof
+:cu_headless_nomodel
+call :err "--ai custom needs a model - pass --model or set AI_BAT_CUSTOM_MODEL"
+set "BF_EXIT=5"
+set "BF_STOP=1"
+goto :eof
+
+
+rem ============================================================================
 rem  COMMAND BUILDERS
 rem  Every flow stores its choices in named variables and rebuilds CMD from
 rem  scratch on each render, so [B] back never double-appends a flag.
@@ -882,19 +1516,40 @@ if "!AI_KIND!"=="claude" goto :build_claude
 if "!AI_KIND!"=="codex"  goto :build_codex
 if "!AI_KIND!"=="gemini" goto :build_gemini
 if "!AI_KIND!"=="agy"    goto :build_agy
+rem The endpoint engines run a binary that is already here; which one depends on
+rem the wire format, and the rest of the difference lives in the environment.
+if "!AI_KIND!"=="deepseek" goto :build_claude
+if "!AI_KIND!"=="custom" if "!AX_SHAPE!"=="openai" goto :build_codex
+if "!AI_KIND!"=="custom" goto :build_claude
 goto :eof
 
 :build_claude
 set "CMD=claude --dangerously-skip-permissions"
 if defined PERM_MODE set "CMD=claude --permission-mode !PERM_MODE!"
-if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
-if defined EFFORT_FLAG set "CMD=!CMD! !EFFORT_FLAG!"
+rem Against a third-party endpoint the model and the effort level travel as
+rem ANTHROPIC_MODEL and CLAUDE_CODE_EFFORT_LEVEL (:ax_apply_env); the flags would
+rem only fight them, so --model and --effort are left off that command line.
+if "!AI_KIND!"=="claude" if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
+if "!AI_KIND!"=="claude" if defined EFFORT_FLAG set "CMD=!CMD! !EFFORT_FLAG!"
 set "CMD=!CMD!!CL_SESSION!!CL_VERBOSE!!CL_ADDDIR!!CL_SYSPROMPT!!CL_MCP!"
 set "CMD=!CMD!!CL_TOOLS!!CL_CHROME!!CL_WORKTREE!!CL_STARTUP!!CL_IDE!!BF_EXTRA!"
 goto :eof
 
+rem A custom provider is described entirely on the command line, so the user's
+rem own ~/.codex/config.toml is never touched. codex parses each -c value as
+rem TOML and falls back to the raw string, and it rejects a provider with no
+rem name, so both are spelled out. wire_api is left at its default: this codex
+rem accepts only "responses".
 :build_codex
-set "CMD=!CX_BASE!!CX_MODEL!!CX_APPR!!CX_SEARCH!!CX_CD!!BF_EXTRA!!CX_PROMPT!"
+set "CU_CX="
+if not "!AI_KIND!"=="custom" goto :build_codex_go
+set "CU_CX= -c model_provider=aibat -c model_providers.aibat.name=aibat"
+set "CU_CX=!CU_CX! -c model_providers.aibat.base_url=!AX_URL!"
+set "CU_CX=!CU_CX! -c model_providers.aibat.env_key=!AX_KEYVAR!"
+set "CX_MODEL="
+if defined AX_MODEL set "CX_MODEL= -m !AX_MODEL!"
+:build_codex_go
+set "CMD=!CX_BASE!!CU_CX!!CX_MODEL!!CX_APPR!!CX_SEARCH!!CX_CD!!BF_EXTRA!!CX_PROMPT!"
 goto :eof
 
 :build_gemini
@@ -969,7 +1624,12 @@ goto :confirm
 :run
 if not defined BF_NONINTERACTIVE call :header "Launching"
 if not defined CMD goto :run_nocmd
+if "!AI_KIND!"=="deepseek" call :ax_apply_env
+if "!AI_KIND!"=="custom" call :ax_apply_env
+if defined BF_STOP goto :cleanup
 call :info "Starting !AI_NAME! in !REPO_ROOT!"
+if "!AI_KIND!"=="deepseek" call :ax_launch_note
+if "!AI_KIND!"=="custom" call :ax_launch_note
 echo(
 pushd "!REPO_ROOT!" 2>nul || goto :run_baddir
 rem Percent expansion on purpose: it is the only form that runs a command
@@ -1137,7 +1797,8 @@ goto :eof
 
 rem ============================================================================
 rem  MODEL MENU LIST (external, editable, updatable)
-rem  ai-models.json next to the script feeds the Claude and Codex model menus:
+rem  ai-models.json next to the script feeds the claude, codex, deepseek and
+rem  custom model menus:
 rem      { "claude": [ { "id": "...", "desc": "..." } ], "codex": [ ... ] }
 rem  Array order is menu order. PowerShell converts the JSON to pipe-delimited
 rem  lines in MDL_LINES; the conversion reruns only when the file's stamp
@@ -1183,7 +1844,7 @@ echo $ErrorActionPreference = 'Stop' > "!PS_SCRIPT!"
 echo try { >> "!PS_SCRIPT!"
 echo     $m = Get-Content -Raw -LiteralPath $env:MODELS_FILE ^| ConvertFrom-Json >> "!PS_SCRIPT!"
 echo     $out = @() >> "!PS_SCRIPT!"
-echo     foreach ($eng in 'claude','codex') { >> "!PS_SCRIPT!"
+echo     foreach ($eng in 'claude','codex','deepseek','custom') { >> "!PS_SCRIPT!"
 echo         foreach ($e in @($m.$eng)) { >> "!PS_SCRIPT!"
 echo             $id = ([string]$e.id) -replace '[^^A-Za-z0-9._@:/-]', '' >> "!PS_SCRIPT!"
 echo             $d  = ([string]$e.desc) -replace '[^^A-Za-z0-9 ._,+/@:-]', '' >> "!PS_SCRIPT!"
@@ -1223,7 +1884,12 @@ rem echo does not touch ERRORLEVEL, so the last menu key's value would lie.
   echo     { "id": "gpt-5.5", "desc": "complex coding, research, real work" },
   echo     { "id": "gpt-5.4", "desc": "strong for everyday coding" },
   echo     { "id": "gpt-5.4-mini", "desc": "small, fast, cost-efficient" }
-  echo   ]
+  echo   ],
+  echo   "deepseek": [
+  echo     { "id": "deepseek-v4-pro", "desc": "V4 Pro - reasoning and agentic work" },
+  echo     { "id": "deepseek-v4-flash", "desc": "V4 Flash - lower latency, cheaper" }
+  echo   ],
+  echo   "custom": []
   echo }
 )
 if not exist "!MODELS_FILE!" (
@@ -1327,7 +1993,9 @@ rem (ANTHROPIC_API_KEY or apiKey in %%APPDATA%%\claude\config.json - same
 rem sources as :fetch_models), else from models.dev, a public no-auth model
 rem database that uses the vendors' native ids. Codex comes from the picker
 rem cache codex itself maintains in ~/.codex/models_cache.json - those are the
-rem only slugs "codex -m" accepts, so no website beats it. Any section whose
+rem only slugs "codex -m" accepts, so no website beats it. DeepSeek comes from
+rem models.dev, which carries names and release dates, falling back to the bare
+rem id list at api.deepseek.com/models when DEEPSEEK_API_KEY is set. Any section whose
 rem sources are unreachable keeps its current entries; if nothing is reachable
 rem the file is left untouched and the exit code is 1. Output is deterministic
 rem (no timestamps), so re-running without upstream changes is a no-op commit.
@@ -1341,6 +2009,7 @@ echo $old = $null >> "!PS_SCRIPT!"
 echo if (Test-Path -LiteralPath $dst) { try { $old = Get-Content -Raw -LiteralPath $dst ^| ConvertFrom-Json } catch { $old = $null } } >> "!PS_SCRIPT!"
 echo $claude = @() >> "!PS_SCRIPT!"
 echo $srcC = '' >> "!PS_SCRIPT!"
+echo $md = $null >> "!PS_SCRIPT!"
 echo $key = $env:ANTHROPIC_API_KEY >> "!PS_SCRIPT!"
 echo if (-not $key) { >> "!PS_SCRIPT!"
 echo     $cfg = Join-Path $env:APPDATA 'claude\config.json' >> "!PS_SCRIPT!"
@@ -1377,8 +2046,32 @@ echo         $srcX = 'codex cache' >> "!PS_SCRIPT!"
 echo     } catch {} >> "!PS_SCRIPT!"
 echo } >> "!PS_SCRIPT!"
 echo if (-not $codex -and $old.codex) { $codex = @($old.codex); $srcX = 'kept existing - no codex cache' } >> "!PS_SCRIPT!"
-echo if ((-not $claude) -and (-not $codex)) { Write-Host '   Nothing fetched - file left unchanged.'; exit 1 } >> "!PS_SCRIPT!"
-echo $doc = [ordered]@{ comment = 'Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown.'; claude = $claude; codex = $codex } >> "!PS_SCRIPT!"
+echo $deep = @() >> "!PS_SCRIPT!"
+echo $srcD = '' >> "!PS_SCRIPT!"
+echo if ($null -eq $md) { try { $md = Invoke-RestMethod -Uri 'https://models.dev/api.json' -TimeoutSec 15 } catch {} } >> "!PS_SCRIPT!"
+echo if ($md) { >> "!PS_SCRIPT!"
+echo     try { >> "!PS_SCRIPT!"
+echo         $deep = @($md.deepseek.models.PSObject.Properties ^| Sort-Object { [string]$_.Value.release_date } -Descending ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
+echo             [pscustomobject]@{ id = $_.Name; desc = ([string]$_.Value.name + ' - ' + [string]$_.Value.release_date) } }) >> "!PS_SCRIPT!"
+echo         $srcD = 'models.dev' >> "!PS_SCRIPT!"
+echo     } catch {} >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+echo if ((-not $deep) -and $env:DEEPSEEK_API_KEY) { >> "!PS_SCRIPT!"
+echo     try { >> "!PS_SCRIPT!"
+echo         $hd = @{ Authorization = ('Bearer ' + $env:DEEPSEEK_API_KEY) } >> "!PS_SCRIPT!"
+echo         $rd = Invoke-RestMethod -Uri 'https://api.deepseek.com/models' -Headers $hd -TimeoutSec 10 >> "!PS_SCRIPT!"
+echo         $deep = @($rd.data ^| Sort-Object id ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
+echo             [pscustomobject]@{ id = $_.id; desc = 'available on your DeepSeek key' } }) >> "!PS_SCRIPT!"
+echo         $srcD = 'DeepSeek API' >> "!PS_SCRIPT!"
+echo     } catch {} >> "!PS_SCRIPT!"
+echo } >> "!PS_SCRIPT!"
+echo if (-not $deep -and $old.deepseek) { $deep = @($old.deepseek); $srcD = 'kept existing - fetch failed' } >> "!PS_SCRIPT!"
+echo if ((-not $claude) -and (-not $codex) -and (-not $deep)) { Write-Host '   Nothing fetched - file left unchanged.'; exit 1 } >> "!PS_SCRIPT!"
+rem The custom section is hand-written by definition - no upstream to fetch it
+rem from - so a rebuild carries it through untouched instead of dropping it.
+echo $cust = @() >> "!PS_SCRIPT!"
+echo if ($old.custom) { $cust = @($old.custom) } >> "!PS_SCRIPT!"
+echo $doc = [ordered]@{ comment = 'Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown. The custom list is yours and is kept as is.'; claude = $claude; codex = $codex; deepseek = $deep; custom = $cust } >> "!PS_SCRIPT!"
 echo $json = $doc ^| ConvertTo-Json -Depth 4 >> "!PS_SCRIPT!"
 echo $tmp = $dst + '.new' >> "!PS_SCRIPT!"
 echo [IO.File]::WriteAllText($tmp, $json, [Text.UTF8Encoding]::new($false)) >> "!PS_SCRIPT!"
@@ -1386,6 +2079,8 @@ echo $null = Get-Content -Raw -LiteralPath $tmp ^| ConvertFrom-Json >> "!PS_SCRI
 echo Move-Item -LiteralPath $tmp -Destination $dst -Force >> "!PS_SCRIPT!"
 echo Write-Host ('   claude: ' + $claude.Count + ' models - source: ' + $srcC) >> "!PS_SCRIPT!"
 echo Write-Host ('   codex:  ' + $codex.Count + ' models - source: ' + $srcX) >> "!PS_SCRIPT!"
+echo Write-Host ('   deepseek: ' + $deep.Count + ' models - source: ' + $srcD) >> "!PS_SCRIPT!"
+echo Write-Host ('   custom: ' + $cust.Count + ' models - kept from the existing file') >> "!PS_SCRIPT!"
 echo Write-Host ('   Wrote ' + $dst) >> "!PS_SCRIPT!"
 echo exit 0 >> "!PS_SCRIPT!"
 powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
@@ -1413,17 +2108,37 @@ rem inherited from the surrounding shell is not this run's choice and printing
 rem it reads as one.
 set "BF_SHOWCONF="
 if "!AI_KIND!"=="claude" if defined CLAUDE_CONFIG_DIR set "BF_SHOWCONF=1"
+rem An endpoint engine's command line says "claude" or "codex" and little else,
+rem so the endpoint and the model it will really use belong on screen next to it.
+set "BF_SHOWAX="
+if "!AI_KIND!"=="deepseek" set "BF_SHOWAX=1"
+if "!AI_KIND!"=="custom" set "BF_SHOWAX=1"
+if defined BF_SHOWAX call :header_ax
 if not defined BF_COLOR goto :header_plain
 echo(   !ESC![!BF_DIM!mDIR !ESC![0m  !REPO_ROOT!
 if defined AI_NAME echo(   !ESC![!BF_DIM!mAI  !ESC![0m  !AI_NAME!
 if defined BF_SHOWCONF echo(   !ESC![!BF_DIM!mCONF!ESC![0m  !CLAUDE_CONFIG_DIR!
+if defined BF_SHOWAX echo(   !ESC![!BF_DIM!mAPI !ESC![0m  !BF_MASK!  at  !AX_URLSHOW!
+if defined BF_SHOWAX echo(   !ESC![!BF_DIM!mMDL !ESC![0m  !BF_MDLLINE!
 if defined CMD echo(   !ESC![!BF_DIM!mCMD !ESC![0m  !CMD!
 goto :eof
 :header_plain
 echo(   DIR   !REPO_ROOT!
 if defined AI_NAME echo(   AI    !AI_NAME!
 if defined BF_SHOWCONF echo(   CONF  !CLAUDE_CONFIG_DIR!
+if defined BF_SHOWAX echo(   API   !BF_MASK!  at  !AX_URLSHOW!
+if defined BF_SHOWAX echo(   MDL   !BF_MDLLINE!
 if defined CMD echo(   CMD   !CMD!
+goto :eof
+
+rem Only the anthropic shape has a second model to name.
+:header_ax
+call :mask_key "!AX_KEY!"
+set "AX_URLSHOW=not set yet"
+if defined AX_URL set "AX_URLSHOW=!AX_URL!"
+set "BF_MDLLINE=not set yet"
+if defined AX_MODEL set "BF_MDLLINE=!AX_MODEL!"
+if "!AX_SHAPE!"=="anthropic" if defined AX_FAST set "BF_MDLLINE=!BF_MDLLINE!  fast: !AX_FAST!"
 goto :eof
 
 :hr
@@ -1686,17 +2401,19 @@ if /i "%~2"=="claude"      ( set "AI_KIND=claude" & set "AI_NAME=Claude" )
 if /i "%~2"=="codex"       ( set "AI_KIND=codex"  & set "AI_NAME=Codex" )
 if /i "%~2"=="gemini"      ( set "AI_KIND=gemini" & set "AI_NAME=Gemini" )
 if /i "%~2"=="antigravity" ( set "AI_KIND=agy"    & set "AI_NAME=Antigravity" )
+if /i "%~2"=="deepseek"    ( set "AI_KIND=deepseek" & set "AI_NAME=DeepSeek" )
+if /i "%~2"=="custom"      ( set "AI_KIND=custom"   & set "AI_NAME=Custom API" )
 if not defined AI_KIND goto :args_ai_bad
 if "!AI_KIND!"=="codex" set "CX_BASE=codex"
 shift
 shift
 goto :parse_args
 :args_ai_missing
-call :err "--ai needs a value: claude, codex, gemini or antigravity"
+call :err "--ai needs a value: claude, codex, gemini, antigravity, deepseek or custom"
 set "BF_EXIT=2"
 goto :eof
 :args_ai_bad
-call :err "unknown engine '%~2'; expected claude, codex, gemini or antigravity"
+call :err "unknown engine '%~2'; expected claude, codex, gemini, antigravity, deepseek or custom"
 set "BF_EXIT=2"
 goto :eof
 :args_dir
@@ -1719,12 +2436,14 @@ if "%~2"=="" goto :args_val_missing
 set "MODEL_FLAG=--model %~2"
 set "CX_MODEL= -m %~2"
 set "GM_MODEL= -m %~2"
+set "AX_MODEL=%~2"
 shift
 shift
 goto :parse_args
 :args_effort
 if "%~2"=="" goto :args_val_missing
 set "EFFORT_FLAG=--effort %~2"
+set "AX_EFFORT=%~2"
 shift
 shift
 goto :parse_args
@@ -1855,18 +2574,24 @@ rem Usage goes to stdout and exits 0 (BAT-004).
 :usage
 echo(!BF_NAME! !BF_VERSION!
 echo(
-echo(Launches Claude, Codex, Gemini or Antigravity with the flags you pick.
+echo(Launches Claude, Codex, Gemini, Antigravity, DeepSeek or any endpoint of your
+echo(own, with the flags you pick.
 echo(
 echo(Usage: !BF_SELF! [options]
 echo(
 echo(  With no options it opens the interactive menu.
 echo(  With --ai it builds and runs the command directly, no menu.
 echo(
+echo(  deepseek and custom install nothing: they point the claude CLI at an
+echo(  Anthropic Messages endpoint, or the codex CLI at an OpenAI Responses one.
+echo(  The menu asks for the endpoint and key; --ai reads them from the
+echo(  environment instead ^(DEEPSEEK_API_KEY, or the AI_BAT_CUSTOM_* set^).
+echo(
 echo(Options:
-echo(  --ai ^<claude^|codex^|gemini^|antigravity^>   engine to launch
+echo(  --ai ^<claude^|codex^|gemini^|antigravity^|deepseek^|custom^>   engine to launch
 echo(  --account ^<1^|2^>            Claude config profile to use
 echo(  --model ^<id^>               model id passed to the engine
-echo(  --effort ^<low^|medium^|high^|xhigh^|max^>     Claude effort level
+echo(  --effort ^<low^|medium^|high^|xhigh^|max^>     any claude-driven engine
 echo(  --perm ^<mode^>              Claude permission mode
 echo(  --extra ^<text^>             extra flags appended verbatim
 echo(  --dir ^<path^>               working directory to run in
@@ -1885,13 +2610,21 @@ echo(  AI_BAT_ROOT         working directory override
 echo(  AI_BAT_ACCENT       SGR params for the accent color, default 38;5;208
 echo(  AI_BAT_MODELS_URL   source URL for model list updates
 echo(  AI_BAT_AUTO_UPDATE  refresh the model list at launch, at most once a day
+echo(  DEEPSEEK_API_KEY    key for the DeepSeek engine; [5] can store it for you
+echo(  AI_BAT_DEEPSEEK_URL override the DeepSeek endpoint, default
+echo(                      https://api.deepseek.com/anthropic
+echo(  AI_BAT_CUSTOM_KEY   key for the Custom API engine; [6] can store it
+echo(  AI_BAT_CUSTOM_URL   base URL for the Custom API engine
+echo(  AI_BAT_CUSTOM_MODEL model id for the Custom API engine
+echo(  AI_BAT_CUSTOM_BACKEND  claude ^(default^) or codex - which CLI drives it
 echo(  NO_COLOR            disables color when set and non-empty
 echo(  FORCE_COLOR         re-enables color unless NO_COLOR is set
 echo(  CI, NO_INPUT        force non-interactive mode
 echo(
 echo(Files:
-echo(  ai-models.json   Claude and Codex model menus, JSON, next to the script.
-echo(                   Edit by hand or refresh with --update-models / [U].
+echo(  ai-models.json   Model menus for claude, codex, deepseek and custom, JSON,
+echo(                   next to the script. Edit by hand or refresh with
+echo(                   --update-models / [U]; the custom list is only ever yours.
 echo(                   Created with defaults on first use.
 echo(
 echo(Exit codes:
@@ -1900,7 +2633,7 @@ echo(  1   model list update failed
 echo(  2   usage error
 echo(  3   missing dependency ^(choice.exe unavailable^)
 echo(  4   cancelled by user
-echo(  5   precondition failed ^(working directory missing^)
+echo(  5   precondition failed ^(missing directory, endpoint, key or model^)
 echo(  70  internal error ^(iteration cap tripped^)
 echo(  other   exit code of the launched AI CLI, passed through
 goto :eof

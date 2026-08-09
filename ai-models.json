@@ -63,5 +63,18 @@
                       "id":  "gpt-5.4-mini",
                       "desc":  "Small, fast, and cost-efficient model for simpler coding tasks."
                   }
-              ]
+              ],
+    "deepseek":  [
+                     {
+                         "id":  "deepseek-v4-pro",
+                         "desc":  "DeepSeek V4 Pro - reasoning and agentic work"
+                     },
+                     {
+                         "id":  "deepseek-v4-flash",
+                         "desc":  "DeepSeek V4 Flash - lower latency, cheaper"
+                     }
+                 ],
+    "custom":  [
+
+               ]
 }
