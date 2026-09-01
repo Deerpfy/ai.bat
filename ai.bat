@@ -12,7 +12,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ---- identity --------------------------------------------------------------
 set "BF_NAME=AI LAUNCHER"
-set "BF_VERSION=2.4"
+set "BF_VERSION=2.5"
 
 rem Captured here, at the top level, on purpose: inside a "call :label" the %0
 rem token refers to the label, not to the script, so %~dp0 and %~nx0 are only
@@ -60,6 +60,20 @@ set "BF_IDLE_TIMEOUT=300"
 set "BF_ROOT_CAP=64"
 if defined AI_BAT_TIMEOUT set "BF_IDLE_TIMEOUT=%AI_BAT_TIMEOUT%"
 
+rem ---- keep awake ------------------------------------------------------------
+rem Lid close is a power-plan setting rather than a runtime request, so switching
+rem it off has to be undone afterwards. These two GUIDs are the stable names for
+rem the "Power buttons and lid" subgroup and the "Lid close action" setting; the
+rem restore file holds the plan and the two old values (see :awake_lid_on).
+set "BF_LID_SUB=4f971e89-eebd-4455-a8de-9e59040e7347"
+set "BF_LID_ACT=5ca83367-6e45-459f-a27b-476b1d01c936"
+set "BF_LID_FILE=%LOCALAPPDATA%\ai-launcher\lid-restore.txt"
+if not defined LOCALAPPDATA set "BF_LID_FILE=%TEMP%\ai-launcher-lid-restore.txt"
+rem Backstop on the keeper's own life, so it can never outlast a plausible
+rem session even if watching this process fails (BAT-207).
+set "BF_AWAKE_MAX=86400"
+if defined AI_BAT_AWAKE_MAX set "BF_AWAKE_MAX=%AI_BAT_AWAKE_MAX%"
+
 rem ---- state -----------------------------------------------------------------
 set "BF_EXIT=0"
 set "BF_LOOPS=0"
@@ -73,6 +87,7 @@ set "AI_KIND="
 set "AI_NAME="
 set "AI_EDITED="
 set "CMD="
+set "BF_AWAKE=off"
 
 rem setlocal copies the caller's environment, so any of these names already
 rem present outside becomes a silently applied flag. That happens for real:
@@ -97,6 +112,8 @@ for %%V in (
   MDL_COUNT MDL_MORE MDL_STAMP MDL_BAD MDL_UPD_RC BF_MKEYS BF_MDEF BF_MRANGE
   BF_MST BF_UPDATE BF_REFRESH BF_E1 BF_SHOWAX BF_MASK BF_MK BF_MDLLINE
   BF_CTX_ON BF_CTX_TAG BF_CTX_PATH BF_CTX_HAVE BF_CTX_RC BF_CTXSET
+  BF_AWAKE_PID BF_AWAKE_PS BF_AWAKE_LID BF_AWAKE_TAG BF_AWBAD BF_AWAKE_RC
+  AI_BAT_LID_FILE AI_BAT_AWAKE_PIDFILE AI_BAT_AWAKE_DISPLAY AI_BAT_AWAKE_LIFE
 ) do set "%%V="
 
 rem An endpoint engine hands Anthropic-shaped names to the claude process it
@@ -119,12 +136,20 @@ set "BF_HR=!BF_HR!!BF_HR!!BF_HR!!BF_HR!!BF_HR!!BF_HR!!BF_HR!"
 set "BF_RULE=!BF_HR!--"
 
 call :detect_context
+
+rem AI_BAT_AWAKE preselects the keep-awake mode for every run; --awake and [K]
+rem override it per run. A value that is not one of the four is named and dropped
+rem rather than silently read as "off" (BAT-309).
+if defined AI_BAT_AWAKE call :awake_set "%AI_BAT_AWAKE%"
+if defined BF_AWBAD call :warn "AI_BAT_AWAKE is not off, system, display or lid - ignoring it"
+
 call :parse_args %*
 if defined BF_STOP goto :cleanup
 if not "!BF_EXIT!"=="0" goto :cleanup
 
 call :resolve_root
 call :detect_git_bash
+call :awake_recover
 
 if defined BF_FIXENV goto :env_fix_go
 if defined BF_UPDATE goto :update_flag
@@ -1591,19 +1616,22 @@ rem ============================================================================
 rem  SHARED: CONFIRM / EDIT / CHDIR / RUN
 rem ============================================================================
 :confirm
+call :awake_tag
 call :header "Confirm"
 call :sec "READY"
 call :item "Y" "Launch"       "run the command above"
 call :item "E" "Edit command" "hand-edit before running"
 call :item "D" "Change dir"   "pick a different working directory"
+call :item "K" "Keep awake"   "!BF_AWAKE_TAG!"
 call :item "R" "Engine menu"  "start over"
-call :foot "[Y] launch  [E] edit  [D] dir  [R] restart  [Q] quit" "timeout quits"
-call :menu_key "YEDRQ" "Q"
+call :foot "[Y] launch  [E] edit  [D] dir  [K] awake  [R] menu" "[Q] or timeout"
+call :menu_key "YEDKRQ" "Q"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="Y" goto :run
 if "!BF_CH!"=="E" goto :edit
 if "!BF_CH!"=="D" goto :chdir
+if "!BF_CH!"=="K" goto :awake_menu
 if "!BF_CH!"=="R" goto :ai_select
 goto :unreachable
 
@@ -1656,6 +1684,7 @@ if defined BF_STOP goto :cleanup
 call :info "Starting !AI_NAME! in !REPO_ROOT!"
 if "!AI_KIND!"=="deepseek" call :ax_launch_note
 if "!AI_KIND!"=="custom" call :ax_launch_note
+call :awake_start
 echo(
 pushd "!REPO_ROOT!" 2>nul || goto :run_baddir
 rem Percent expansion on purpose: it is the only form that runs a command
@@ -1674,6 +1703,253 @@ goto :cleanup
 call :err "cannot enter working directory !REPO_ROOT! - it may have been deleted or renamed"
 set "BF_EXIT=5"
 goto :cleanup
+
+
+rem ============================================================================
+rem  KEEP AWAKE
+rem  Windows has no caffeinate. The nearest equivalent is SetThreadExecutionState,
+rem  a per-thread request released the moment the thread holding it dies, so the
+rem  block is held by a small PowerShell keeper started beside the agent and ended
+rem  with it. Batch cannot trap Ctrl-C (BAT-302), so the keeper also watches this
+rem  cmd.exe and releases on its own if :cleanup never runs; a deadline caps its
+rem  life either way (BAT-207).
+rem
+rem  The keeper gets its own console rather than "start /b": a Ctrl-C in the agent
+rem  reaches every process sharing this one, and a keep-awake that dies the first
+rem  time the user interrupts the agent would be worse than none at all.
+rem
+rem  Closing the lid is a separate decision that SetThreadExecutionState cannot
+rem  reach, because it is a power-plan setting rather than a runtime request. [4]
+rem  therefore edits the active plan, after writing the old value to a restore
+rem  file, and that file is replayed at the next start, so a run killed
+rem  mid-session still gives the lid back.
+rem
+rem  Every PowerShell body below is written with the redirection first
+rem  (>>"file" echo ...) rather than trailing: a line ending in a digit would
+rem  otherwise turn that digit into a stream handle.
+rem ============================================================================
+:awake_menu
+call :awake_tag
+call :header "Keep awake"
+call :sec "WHILE THE SESSION RUNS"
+call :item "1" "Off"               "let Windows sleep as configured"
+call :item "2" "No sleep"          "machine stays up, screen may blank"
+call :item "3" "No sleep + screen" "screen stays on as well"
+call :item "4" "Ignore lid close"  "3, and a closed lid keeps it running"
+call :note "1-3 need no extra rights and last exactly as long as the session."
+call :note "4 also sets the active power plan's lid-close action to Do nothing,"
+call :note "and puts the old value back when the session ends - or at the next"
+call :note "start if this run is killed. Some machines only allow that elevated."
+call :foot "1 2 3 4   [B] back   [Q] quit" "now: !BF_AWAKE!"
+call :menu_key "1234BQ" "B"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="1" set "BF_AWAKE=off"
+if "!BF_CH!"=="2" set "BF_AWAKE=system"
+if "!BF_CH!"=="3" set "BF_AWAKE=display"
+if "!BF_CH!"=="4" set "BF_AWAKE=lid"
+goto :confirm
+
+rem %1 = requested mode. Sets BF_AWAKE, or sets BF_AWBAD and leaves the current
+rem mode alone. The caller decides how bad a bad value is: --awake calls it a
+rem usage error, AI_BAT_AWAKE only warns.
+:awake_set
+set "BF_AWBAD="
+if /i "%~1"=="off"     ( set "BF_AWAKE=off"     & goto :eof )
+if /i "%~1"=="system"  ( set "BF_AWAKE=system"  & goto :eof )
+if /i "%~1"=="display" ( set "BF_AWAKE=display" & goto :eof )
+if /i "%~1"=="lid"     ( set "BF_AWAKE=lid"     & goto :eof )
+set "BF_AWBAD=1"
+goto :eof
+
+rem One line describing the current mode, for the confirm screen and the launch
+rem note. Kept inside 42 characters so the item line stays inside the frame.
+:awake_tag
+set "BF_AWAKE_TAG=off - Windows sleeps as configured"
+if "!BF_AWAKE!"=="system"  set "BF_AWAKE_TAG=no sleep, screen may still blank"
+if "!BF_AWAKE!"=="display" set "BF_AWAKE_TAG=no sleep, screen stays on"
+if "!BF_AWAKE!"=="lid"     set "BF_AWAKE_TAG=screen on, lid close ignored"
+goto :eof
+
+rem Called once, immediately before the agent starts. Nothing here is fatal: the
+rem session is what was asked for and the power block is a convenience, so a
+rem refused change warns and the launch carries on (BAT-310).
+:awake_start
+if "!BF_AWAKE!"=="off" goto :eof
+if "!BF_AWAKE!"=="lid" call :awake_lid_on
+call :awake_tag
+rem A refused lid change does not stop the rest, but announcing "lid close
+rem ignored" one line after warning that it is not would be worse than useless.
+if "!BF_AWAKE!"=="lid" if not defined BF_AWAKE_LID set "BF_AWAKE_TAG=no sleep, screen stays on"
+call :awake_keeper
+call :info "Keep awake: !BF_AWAKE_TAG!"
+goto :eof
+
+rem The keeper records its own pid before anything else, so :awake_stop can end
+rem it even when the API call inside it never succeeded, and it clears both its
+rem own files on the way out, so a session killed past :cleanup leaves nothing
+rem behind in TEMP either.
+:awake_keeper
+set "BF_AWAKE_PS=%TEMP%\ai-bat-awake-%RANDOM%%RANDOM%.ps1"
+set "BF_AWAKE_PID=%TEMP%\ai-bat-awake-%RANDOM%%RANDOM%.pid"
+set "AI_BAT_AWAKE_PIDFILE=!BF_AWAKE_PID!"
+set "AI_BAT_AWAKE_LIFE=!BF_AWAKE_MAX!"
+set "AI_BAT_AWAKE_DISPLAY="
+if not "!BF_AWAKE!"=="system" set "AI_BAT_AWAKE_DISPLAY=1"
+> "!BF_AWAKE_PS!" echo $ErrorActionPreference = 'SilentlyContinue'
+>>"!BF_AWAKE_PS!" echo Set-Content -Path $env:AI_BAT_AWAKE_PIDFILE -Value $PID -Encoding ASCII
+>>"!BF_AWAKE_PS!" echo $sig = '[DllImport("kernel32.dll", SetLastError=true)] public static extern uint SetThreadExecutionState(uint f);'
+>>"!BF_AWAKE_PS!" echo $api = @(Add-Type -MemberDefinition $sig -Name Awake -Namespace AiBat -PassThru)[0]
+>>"!BF_AWAKE_PS!" echo [uint32]$cont = 2147483648
+>>"!BF_AWAKE_PS!" echo [uint32]$need = 1
+>>"!BF_AWAKE_PS!" echo if ($env:AI_BAT_AWAKE_DISPLAY) { $need = $need + 2 }
+>>"!BF_AWAKE_PS!" echo $null = $api::SetThreadExecutionState([uint32]($cont + $need))
+>>"!BF_AWAKE_PS!" echo $parent = $null
+>>"!BF_AWAKE_PS!" echo try { $parent = Get-Process -Id (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId } catch { }
+>>"!BF_AWAKE_PS!" echo $deadline = (Get-Date).AddSeconds([double]$env:AI_BAT_AWAKE_LIFE)
+>>"!BF_AWAKE_PS!" echo while ((Get-Date) -lt $deadline) {
+>>"!BF_AWAKE_PS!" echo     Start-Sleep -Seconds 5
+>>"!BF_AWAKE_PS!" echo     if ($parent -eq $null) { break }
+>>"!BF_AWAKE_PS!" echo     if ($parent.HasExited) { break }
+>>"!BF_AWAKE_PS!" echo }
+>>"!BF_AWAKE_PS!" echo $null = $api::SetThreadExecutionState($cont)
+>>"!BF_AWAKE_PS!" echo Remove-Item -Path $env:AI_BAT_AWAKE_PIDFILE -Force
+>>"!BF_AWAKE_PS!" echo Remove-Item -Path $PSCommandPath -Force
+start "ai-awake" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "!BF_AWAKE_PS!"
+rem Cleared right after CreateProcess: the keeper already holds its own copy, and
+rem these would otherwise travel on into the agent's environment.
+set "AI_BAT_AWAKE_PIDFILE="
+set "AI_BAT_AWAKE_LIFE="
+set "AI_BAT_AWAKE_DISPLAY="
+goto :eof
+
+rem Records the current lid action, then sets both to 0, "Do nothing".
+rem
+rem The old value is read from the registry rather than parsed out of
+rem powercfg /query, because Windows ships this setting hidden (Attributes=1
+rem under HKLM\...\Control\Power\PowerSettings) and /query prints nothing at all
+rem for a hidden setting - which reads exactly like a machine with no lid. The
+rem registry answers in both cases: the plan's own value if it has one, the
+rem default for that plan if it does not, and 1, "Sleep", if neither is there.
+rem
+rem Writing goes back through powercfg rather than the registry. The values live
+rem under HKLM, so a direct write needs elevation, while powercfg reaches the
+rem same setting through the power API and is usually allowed for the plan the
+rem user is running. Where it is not, the read-back below catches it, so a
+rem refused change is reported instead of announced (BAT-310).
+:awake_lid_on
+set "AI_BAT_LID_FILE=!BF_LID_FILE!"
+set "PS_SCRIPT=%TEMP%\ai-bat-lid-%RANDOM%%RANDOM%.ps1"
+> "!PS_SCRIPT!" echo $ErrorActionPreference = 'Stop'
+>>"!PS_SCRIPT!" echo $sub = '!BF_LID_SUB!'
+>>"!PS_SCRIPT!" echo $act = '!BF_LID_ACT!'
+>>"!PS_SCRIPT!" echo $rx = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+>>"!PS_SCRIPT!" echo $line = (powercfg /getactivescheme) -join ' '
+>>"!PS_SCRIPT!" echo $m = [regex]::Match($line, $rx)
+>>"!PS_SCRIPT!" echo if (-not $m.Success) { throw 'no active power plan' }
+>>"!PS_SCRIPT!" echo $scheme = $m.Value
+>>"!PS_SCRIPT!" echo $root = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power'
+>>"!PS_SCRIPT!" echo $mine = $root + '\User\PowerSchemes\' + $scheme + '\' + $sub + '\' + $act
+>>"!PS_SCRIPT!" echo $src = $root + '\PowerSettings\' + $sub + '\' + $act + '\DefaultPowerSchemeValues\' + $scheme
+>>"!PS_SCRIPT!" echo if (Test-Path $mine) { $src = $mine }
+>>"!PS_SCRIPT!" echo $ac = 1
+>>"!PS_SCRIPT!" echo $dc = 1
+>>"!PS_SCRIPT!" echo if (Test-Path $src) {
+>>"!PS_SCRIPT!" echo     $v = Get-ItemProperty -Path $src
+>>"!PS_SCRIPT!" echo     $names = $v.PSObject.Properties.Name
+>>"!PS_SCRIPT!" echo     if ($names -contains 'ACSettingIndex') { $ac = [int]$v.ACSettingIndex }
+>>"!PS_SCRIPT!" echo     if ($names -contains 'DCSettingIndex') { $dc = [int]$v.DCSettingIndex }
+>>"!PS_SCRIPT!" echo }
+>>"!PS_SCRIPT!" echo $dir = Split-Path -Parent $env:AI_BAT_LID_FILE
+>>"!PS_SCRIPT!" echo if ($dir -and -not (Test-Path $dir)) { $null = New-Item -ItemType Directory -Force -Path $dir }
+>>"!PS_SCRIPT!" echo $old = $scheme + ' ' + $ac + ' ' + $dc
+>>"!PS_SCRIPT!" echo Set-Content -Path $env:AI_BAT_LID_FILE -Value $old -Encoding ASCII
+>>"!PS_SCRIPT!" echo powercfg /setacvalueindex $scheme $sub $act 0
+>>"!PS_SCRIPT!" echo powercfg /setdcvalueindex $scheme $sub $act 0
+>>"!PS_SCRIPT!" echo powercfg /setactive $scheme
+>>"!PS_SCRIPT!" echo $now = $null
+>>"!PS_SCRIPT!" echo if (Test-Path $mine) { $now = Get-ItemProperty -Path $mine }
+>>"!PS_SCRIPT!" echo if ($now -eq $null -or [int]$now.ACSettingIndex -ne 0 -or [int]$now.DCSettingIndex -ne 0) {
+>>"!PS_SCRIPT!" echo     Remove-Item $env:AI_BAT_LID_FILE -Force -ErrorAction SilentlyContinue
+>>"!PS_SCRIPT!" echo     exit 1
+>>"!PS_SCRIPT!" echo }
+>>"!PS_SCRIPT!" echo exit 0
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!" >nul 2>&1
+set "BF_AWAKE_RC=!ERRORLEVEL!"
+del "!PS_SCRIPT!" >nul 2>&1
+set "AI_BAT_LID_FILE="
+if "!BF_AWAKE_RC!"=="0" goto :awake_lid_ok
+call :warn "the power plan refused to change its lid-close action - try starting ai.bat as administrator. Everything else in [K] still applies."
+goto :eof
+:awake_lid_ok
+set "BF_AWAKE_LID=1"
+call :ok "Lid close set to do nothing; the old setting is saved in !BF_LID_FILE!"
+goto :eof
+
+rem Replays the restore file and reads the result back. The file is kept whenever
+rem the replay did not take, so :awake_recover tries again at the next start, and
+rem a plan that inherited its lid action ends up with an explicit setting of the
+rem same value - the only undo powercfg offers without elevation, and the same
+rem thing Power Options would leave behind. Safe to call with nothing to restore.
+:awake_lid_off
+set "BF_AWAKE_LID="
+if not exist "!BF_LID_FILE!" goto :eof
+set "AI_BAT_LID_FILE=!BF_LID_FILE!"
+set "PS_SCRIPT=%TEMP%\ai-bat-lid-%RANDOM%%RANDOM%.ps1"
+> "!PS_SCRIPT!" echo $ErrorActionPreference = 'Stop'
+>>"!PS_SCRIPT!" echo $f = $env:AI_BAT_LID_FILE
+>>"!PS_SCRIPT!" echo if (-not (Test-Path $f)) { exit 0 }
+>>"!PS_SCRIPT!" echo $p = (Get-Content $f -TotalCount 1).Trim() -split ' '
+>>"!PS_SCRIPT!" echo if ($p.Count -lt 3) { Remove-Item $f -Force; exit 0 }
+>>"!PS_SCRIPT!" echo $sub = '!BF_LID_SUB!'
+>>"!PS_SCRIPT!" echo $act = '!BF_LID_ACT!'
+>>"!PS_SCRIPT!" echo $scheme = $p[0]
+>>"!PS_SCRIPT!" echo powercfg /setacvalueindex $scheme $sub $act $p[1]
+>>"!PS_SCRIPT!" echo powercfg /setdcvalueindex $scheme $sub $act $p[2]
+>>"!PS_SCRIPT!" echo powercfg /setactive $scheme
+>>"!PS_SCRIPT!" echo $mine = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\' + $scheme + '\' + $sub + '\' + $act
+>>"!PS_SCRIPT!" echo $now = $null
+>>"!PS_SCRIPT!" echo if (Test-Path $mine) { $now = Get-ItemProperty -Path $mine }
+>>"!PS_SCRIPT!" echo if ($now -eq $null) { exit 1 }
+>>"!PS_SCRIPT!" echo if ([int]$now.ACSettingIndex -ne [int]$p[1]) { exit 1 }
+>>"!PS_SCRIPT!" echo if ([int]$now.DCSettingIndex -ne [int]$p[2]) { exit 1 }
+>>"!PS_SCRIPT!" echo Remove-Item $f -Force
+>>"!PS_SCRIPT!" echo exit 0
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!" >nul 2>&1
+set "BF_AWAKE_RC=!ERRORLEVEL!"
+del "!PS_SCRIPT!" >nul 2>&1
+set "AI_BAT_LID_FILE="
+goto :eof
+
+rem A run killed before :cleanup leaves the lid action switched off - exactly the
+rem kind of change nobody would think to look for a week later. The restore file
+rem outlives that run, so replay it at the next start (BAT-310).
+:awake_recover
+if not exist "!BF_LID_FILE!" goto :eof
+call :awake_lid_off
+if exist "!BF_LID_FILE!" goto :awake_recover_stuck
+call :info "Restored the lid-close action left behind by an interrupted run."
+goto :eof
+:awake_recover_stuck
+call :warn "an interrupted run left the lid-close action switched off and it could not be restored - start ai.bat as administrator once to put it back"
+goto :eof
+
+rem Runs from :cleanup, so it has to be safe when nothing was ever started. The
+rem pid file is written by the keeper itself and deleted when it releases, so a
+rem missing file here means the block was not in force at the end.
+:awake_stop
+if not defined BF_AWAKE_PID goto :awake_stop_lid
+if exist "!BF_AWAKE_PID!" goto :awake_stop_kill
+call :warn "the keep-awake helper was not running at the end of the session; Windows may have slept"
+goto :awake_stop_files
+:awake_stop_kill
+for /f "usebackq tokens=1" %%P in ("!BF_AWAKE_PID!") do taskkill /f /fi "PID eq %%P" /fi "IMAGENAME eq powershell.exe" >nul 2>&1
+del "!BF_AWAKE_PID!" >nul 2>&1
+:awake_stop_files
+if defined BF_AWAKE_PS if exist "!BF_AWAKE_PS!" del "!BF_AWAKE_PS!" >nul 2>&1
+:awake_stop_lid
+if defined BF_AWAKE_LID call :awake_lid_off
+goto :eof
 
 
 rem ============================================================================
@@ -2133,12 +2409,13 @@ rem echo does not touch ERRORLEVEL, so the last menu key's value would lie.
   echo     { "id": "gpt-5.6-terra", "desc": "balanced, for everyday work" },
   echo     { "id": "gpt-5.6-luna", "desc": "fast and affordable" },
   echo     { "id": "gpt-5.5", "desc": "complex coding, research, real work" },
-  echo     { "id": "gpt-5.4", "desc": "strong for everyday coding" },
-  echo     { "id": "gpt-5.4-mini", "desc": "small, fast, cost-efficient" }
+  echo     { "id": "gpt-5.4", "desc": "everyday coding - needs your own key" },
+  echo     { "id": "gpt-5.4-mini", "desc": "simpler tasks - needs your own key" }
   echo   ],
   echo   "deepseek": [
   echo     { "id": "deepseek-v4-pro", "desc": "V4 Pro - reasoning and agentic work" },
-  echo     { "id": "deepseek-v4-flash", "desc": "V4 Flash - lower latency, cheaper" }
+  echo     { "id": "deepseek-v4-flash", "desc": "V4 Flash - lower latency, cheaper" },
+  echo     { "id": "deepseek-v4-flash-vision-exp", "desc": "V4 Flash Vision - beta, reads images" }
   echo   ],
   echo   "custom": []
   echo }
@@ -2597,6 +2874,7 @@ if /i "!BF_A!"=="--fix-env"   goto :args_fixenv
 if /i "!BF_A!"=="--update-models" goto :args_update
 if /i "!BF_A!"=="--refresh-models" goto :args_refresh
 if /i "!BF_A!"=="--context-menu" goto :args_ctxmenu
+if /i "!BF_A!"=="--awake"    goto :args_awake
 if /i "!BF_A!"=="--ai"      goto :args_ai
 if /i "!BF_A!"=="--dir"     goto :args_dir
 if /i "!BF_A!"=="--model"   goto :args_model
@@ -2657,6 +2935,21 @@ shift
 goto :parse_args
 :args_ctx_bad
 call :err "--context-menu needs on or off"
+set "BF_EXIT=2"
+goto :eof
+:args_awake
+if "%~2"=="" goto :args_awake_missing
+call :awake_set "%~2"
+if defined BF_AWBAD goto :args_awake_bad
+shift
+shift
+goto :parse_args
+:args_awake_missing
+call :err "--awake needs a value: off, system, display or lid"
+set "BF_EXIT=2"
+goto :eof
+:args_awake_bad
+call :err "unknown keep-awake mode '%~2'; expected off, system, display or lid"
 set "BF_EXIT=2"
 goto :eof
 :args_ai
@@ -2864,6 +3157,7 @@ echo(  --fix-env                  set git-bash + PATH permanently, then exit
 echo(  --update-models            download the model list, then exit
 echo(  --refresh-models           rebuild the list from live sources, then exit
 echo(  --context-menu ^<on^|off^>     add or remove the Explorer right-click entry
+echo(  --awake ^<off^|system^|display^|lid^>   keep the machine awake while it runs
 echo(  --yes                      skip confirmation prompts
 echo(  --no-color                 disable colored output
 echo(  --no-input                 never prompt; fail instead
@@ -2875,6 +3169,8 @@ echo(  AI_BAT_ROOT         working directory override
 echo(  AI_BAT_ACCENT       SGR params for the accent color, default 38;5;208
 echo(  AI_BAT_MODELS_URL   source URL for model list updates
 echo(  AI_BAT_AUTO_UPDATE  refresh the model list at launch, at most once a day
+echo(  AI_BAT_AWAKE        default keep-awake mode: off, system, display or lid
+echo(  AI_BAT_AWAKE_MAX    seconds the keep-awake helper may run, default 86400
 echo(  AI_BAT_ICON         icon for the right-click entry: an .ico, or
 echo(                      "file.dll,index". Default: one drawn on install
 echo(  DEEPSEEK_API_KEY    key for the DeepSeek engine; [5] can store it for you
@@ -2914,6 +3210,7 @@ rem  every render rather than only here, and the cursor is never hidden
 rem  (BAT-302).
 rem ============================================================================
 :cleanup
+call :awake_stop
 if defined BF_COLOR <nul set /p "=!ESC![0m!ESC![?25h" 1>&2
 if defined BF_CP chcp !BF_CP! >nul 2>&1
 if defined MDL_LINES if exist "!MDL_LINES!" del "!MDL_LINES!" >nul 2>&1

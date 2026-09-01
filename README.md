@@ -6,11 +6,12 @@ command, and launch.
 
 Supports Claude Code, Codex (OpenAI), Gemini (Google), Antigravity (`agy`),
 DeepSeek, and any endpoint of your own. It's plain batch, so there is nothing to
-install beyond the CLI itself.
+install beyond the CLI itself. [K] on the last screen keeps the machine awake for
+as long as the agent runs, lid included.
 
 ```
   +----------------------------------------------------------------------+
-  | AI LAUNCHER 2.4                           Select engine              |
+  | AI LAUNCHER 2.5                           Select engine              |
   +----------------------------------------------------------------------+
    DIR   H:\Projects\myapp
 
@@ -114,8 +115,8 @@ would still run the agent in the folder `ai.bat` lives in.
 ## Requirements
 
 - Windows with `cmd.exe` and PowerShell 5+ (preinstalled on Windows 10/11) -
-  PowerShell reads `ai-models.json` and powers [F] fix env, [U] update models and
-  [R] right-click menu
+  PowerShell reads `ai-models.json` and powers [F] fix env, [U] update models,
+  [R] right-click menu and [K] keep awake
 - At least one agent CLI on `PATH`: `claude`, `codex`, `gemini`, or `agy`
   (the DeepSeek and Custom API engines reuse `claude` or `codex` - see below)
 - Git Bash if you use Claude Code. The script looks in the usual install locations
@@ -136,7 +137,51 @@ account can use. It needs `ANTHROPIC_API_KEY` in your environment, or an `apiKey
 The key is read at runtime and never stored by this script.
 
 The last screen shows the full command and working directory before anything runs.
-[E] lets you edit the command by hand, [D] changes the directory.
+[E] lets you edit the command by hand, [D] changes the directory, [K] keeps the
+machine awake.
+
+## Keeping the machine awake
+
+Long agent runs and screen savers do not get along. [K] on the confirm screen picks
+how much sleeping to block, for that run only:
+
+```
+  KEEP AWAKE
+   [1] Off                          let Windows sleep as configured
+   [2] No sleep                     machine stays up, screen may blank
+   [3] No sleep + screen            screen stays on as well
+   [4] Ignore lid close             3, and a closed lid keeps it running
+```
+
+The block lasts exactly as long as the agent, and the confirm screen always shows
+which mode is armed. `--awake off|system|display|lid` does the same without the
+menu, and `AI_BAT_AWAKE` sets your default for every run.
+
+**Windows.** [2] and [3] hold `SetThreadExecutionState` from a small hidden
+PowerShell helper started next to the agent. That request dies with the thread
+holding it, so the helper *is* the block: it exits when the launcher does, and it
+watches the launcher itself so that a Ctrl-C which skips cleanup still releases it.
+The helper runs in its own console, because a Ctrl-C aimed at the agent reaches
+everything sharing one.
+
+[4] additionally sets the active power plan's lid-close action to *Do nothing*,
+which is the only way to keep a laptop running with the lid shut - no runtime
+request can override it. The previous value goes into
+`%LOCALAPPDATA%\ai-launcher\lid-restore.txt` first, comes back when the session
+ends, and is replayed at the next start if the run was killed before that. Windows
+ships this setting hidden, so the old value is read from the registry rather than
+from `powercfg /query`, which prints nothing at all for a hidden setting. The write
+goes through `powercfg`, which usually works for the plan you are running; where it
+does not, the launcher reads the result back and tells you to try again elevated
+instead of claiming a change it did not make.
+
+**macOS and Linux.** `ai.sh` has the same menu. On a Mac [2] and [3] run
+`caffeinate -w <pid>` beside the agent, so the assertion is released even if the
+script is killed; [4] adds `sudo pmset -a disablesleep 1`, the switch that keeps a
+MacBook running in clamshell, and puts it back afterwards - or at the next start if
+the run was interrupted. On Linux all four modes are a `systemd-inhibit` lock, with
+[4] adding `handle-lid-switch` to it; screen blanking there belongs to the desktop,
+which logind only sees as idle, so [2] and [3] can behave the same.
 
 ## Bring your own endpoint
 

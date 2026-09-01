@@ -13,7 +13,7 @@ set -u
 
 # ---- identity ---------------------------------------------------------------
 BF_NAME="AI LAUNCHER"
-BF_VERSION="2.2"
+BF_VERSION="2.3"
 
 # Resolved before anything else: the model list and [F] fix env both key off the
 # directory this script lives in, not the repo it ends up running the agent in.
@@ -38,6 +38,22 @@ BF_IDLE_TIMEOUT=300
 BF_ROOT_CAP=64
 [ -n "${AI_BAT_TIMEOUT:-}" ] && BF_IDLE_TIMEOUT="$AI_BAT_TIMEOUT"
 
+# ---- keep awake -------------------------------------------------------------
+# The mechanism is per platform, so decide once: caffeinate on macOS,
+# systemd-inhibit everywhere else.
+BF_OS="$(uname -s 2>/dev/null || printf 'unknown')"
+# Only macOS needs a record here. caffeinate and systemd-inhibit both hold their
+# block for as long as they run, so nothing outlives them; pmset is the one
+# machine-wide switch that has to be put back (see awake_lid_on).
+if [ "$BF_OS" = "Darwin" ]; then
+  BF_STATE_DIR="$HOME/Library/Caches/ai-launcher"
+else
+  BF_STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ai-launcher"
+fi
+BF_LID_FILE="$BF_STATE_DIR/lid-restore"
+# Backstop on the helper's own life, so it can never outlast a plausible session.
+BF_AWAKE_MAX="${AI_BAT_AWAKE_MAX:-86400}"
+
 # ---- state ------------------------------------------------------------------
 BF_EXIT=0
 BF_LOOPS=0
@@ -58,6 +74,17 @@ AI_EDITED=""
 CMD=""
 REPO_ROOT=""
 STEP=""
+
+# off | system | display | lid.  AI_BAT_AWAKE presets it, --awake and [K]
+# override it per run.
+BF_AWAKE="off"
+BF_AWAKE_PID=""
+# LID is "this run changed it and owes a restore"; LIDOK is "a closed lid will
+# not sleep this machine", which is also true when it was already set that way.
+BF_AWAKE_LID=""
+BF_AWAKE_LIDOK=""
+BF_AWAKE_TAG=""
+BF_AWBAD=""
 
 # The launcher exports these to the CLI it starts, so a second run from inside
 # that session would inherit them and apply them as silent defaults. Clear every
@@ -1239,23 +1266,240 @@ build() {
 #  SHARED: CONFIRM / EDIT / CHDIR / RUN
 # =============================================================================
 m_confirm() {
+  awake_tag
   header "Confirm"
   sec "READY"
   item "Y" "Launch"       "run the command above"
   item "E" "Edit command" "hand-edit before running"
   item "D" "Change dir"   "pick a different working directory"
+  item "K" "Keep awake"   "$BF_AWAKE_TAG"
   item "R" "Engine menu"  "start over"
-  foot "[Y] launch  [E] edit  [D] dir  [R] restart  [Q] quit" "timeout quits"
-  menu_key "YEDRQ" "Q"
+  foot "[Y] launch  [E] edit  [D] dir  [K] awake  [R] menu" "[Q] or timeout"
+  menu_key "YEDKRQ" "Q"
   [ -n "$BF_STOP" ] && return 0
   case "$BF_CH" in
     Q) STEP=quit ;;
     Y) STEP=run ;;
     E) STEP=edit ;;
     D) STEP=chdir ;;
+    K) STEP=awake ;;
     R) STEP=engine ;;
     *) unreachable ;;
   esac
+}
+
+
+# =============================================================================
+#  KEEP AWAKE
+#  caffeinate on macOS, systemd-inhibit elsewhere. Both hold their block for
+#  exactly as long as the process runs, so tying that process to this script is
+#  the whole mechanism: the block cannot outlive the session even if cleanup is
+#  skipped, and there is nothing to put back afterwards.
+#
+#  Closing the lid is the one thing neither can reach on macOS, because clamshell
+#  sleep is a machine-wide setting rather than an assertion. [4] therefore also
+#  runs pmset, after writing the old value down, and the record is replayed at
+#  the next start so a run killed mid-session still gives the lid back. On Linux
+#  logind takes lid handling as just another inhibitor lock, so [4] needs nothing
+#  extra there.
+# =============================================================================
+m_awake() {
+  awake_tag
+  header "Keep awake"
+  sec "WHILE THE SESSION RUNS"
+  item "1" "Off"               "let the system sleep as configured"
+  item "2" "No sleep"          "machine stays up, screen may blank"
+  item "3" "No sleep + screen" "screen stays on as well"
+  item "4" "Ignore lid close"  "3, and a closed lid keeps it running"
+  awake_note
+  foot "1 2 3 4   [B] back   [Q] quit" "now: $BF_AWAKE"
+  menu_key "1234BQ" "B"
+  [ -n "$BF_STOP" ] && return 0
+  case "$BF_CH" in
+    Q) STEP=quit; return 0 ;;
+    1) BF_AWAKE=off ;;
+    2) BF_AWAKE=system ;;
+    3) BF_AWAKE=display ;;
+    4) BF_AWAKE=lid ;;
+  esac
+  STEP=confirm
+}
+
+# What [4] costs differs per platform, so describe the one this machine will use
+# rather than both.
+awake_note() {
+  if [ "$BF_OS" = "Darwin" ]; then
+    note "1-3 run caffeinate beside the agent and end with the session."
+    note "4 also runs 'sudo pmset -a disablesleep 1', the only thing that keeps"
+    note "a MacBook running with the lid shut, so sudo will ask for a password."
+    note "It goes back when the session ends, or at the next start if it cannot."
+  else
+    note "1-3 hold a systemd-inhibit lock for as long as the session runs."
+    note "4 adds handle-lid-switch to that lock, so a closed lid is ignored."
+    note "Screen blanking is the desktop's own timer, which logind sees only as"
+    note "idle, so 2 and 3 behave the same on some setups."
+  fi
+}
+
+# $1 = requested mode.  Sets BF_AWAKE, or sets BF_AWBAD and leaves the current
+# mode alone. The caller decides how bad a bad value is: --awake calls it a usage
+# error, AI_BAT_AWAKE only warns.
+awake_set() {
+  BF_AWBAD=""
+  case "$1" in
+    off|system|display|lid) BF_AWAKE="$1" ;;
+    *) BF_AWBAD=1 ;;
+  esac
+  return 0
+}
+
+# One line describing the current mode, for the confirm screen and the launch
+# note. Kept inside 42 characters so the item line stays inside the frame.
+awake_tag() {
+  case "$BF_AWAKE" in
+    system)  BF_AWAKE_TAG="no sleep, screen may still blank" ;;
+    display) BF_AWAKE_TAG="no sleep, screen stays on" ;;
+    lid)     BF_AWAKE_TAG="screen on, lid close ignored" ;;
+    *)       BF_AWAKE_TAG="off - the system sleeps as configured" ;;
+  esac
+}
+
+# Called once, immediately before the agent starts. Nothing here is fatal: the
+# session is what was asked for and the power block is a convenience, so a
+# refused change warns and the launch carries on.
+awake_start() {
+  [ "$BF_AWAKE" = "off" ] && return 0
+  [ "$BF_AWAKE" = "lid" ] && awake_lid_on
+  awake_tag
+  # A refused pmset does not stop the rest, but announcing "lid close ignored"
+  # one line after warning that it is not would be worse than useless.
+  if [ "$BF_AWAKE" = "lid" ] && [ -z "$BF_AWAKE_LIDOK" ]; then
+    BF_AWAKE_TAG="no sleep, screen stays on"
+  fi
+  if [ "$BF_OS" = "Darwin" ]; then
+    awake_start_mac
+  else
+    awake_start_linux
+  fi
+  # Only claim the block when something is actually holding it; the two starters
+  # above already said why when they could not.
+  [ -n "$BF_AWAKE_PID" ] && info "Keep awake: $BF_AWAKE_TAG"
+  return 0
+}
+
+# -i idle sleep, -m disk, -s system sleep on mains, -d display.  -w ties the
+# assertion to this script, so it is released even if cleanup never runs.
+awake_start_mac() {
+  if ! have caffeinate; then
+    warn "caffeinate not found - nothing is holding this Mac awake"
+    return 0
+  fi
+  if [ "$BF_AWAKE" = "system" ]; then
+    caffeinate -i -m -s -w $$ >/dev/null 2>&1 &
+  else
+    caffeinate -d -i -m -s -w $$ >/dev/null 2>&1 &
+  fi
+  BF_AWAKE_PID=$!
+  return 0
+}
+
+# systemd-inhibit holds the lock for the lifetime of the command it runs, so it
+# runs a bounded sleep rather than something that could outlive the session.
+awake_start_linux() {
+  local what="idle:sleep"
+  if ! have systemd-inhibit; then
+    warn "systemd-inhibit not found - nothing is holding this machine awake"
+    return 0
+  fi
+  [ "$BF_AWAKE" = "lid" ] && what="idle:sleep:handle-lid-switch"
+  systemd-inhibit --what="$what" --who="$BF_NAME" --why="AI session" \
+    --mode=block sleep "$BF_AWAKE_MAX" >/dev/null 2>&1 &
+  BF_AWAKE_PID=$!
+  return 0
+}
+
+# macOS only: on Linux the inhibitor above already covers the lid.  pmset is
+# machine-wide, so the old value is written down before it changes and replayed
+# at the next start if this run is killed.
+awake_lid_on() {
+  local old
+  # On Linux the inhibitor lock already carries handle-lid-switch, so the lid is
+  # covered without touching a machine-wide setting at all.
+  if [ "$BF_OS" != "Darwin" ]; then
+    BF_AWAKE_LIDOK=1
+    return 0
+  fi
+  if ! have pmset; then
+    warn "pmset not found - a closed lid will still sleep this machine"
+    return 0
+  fi
+  old="$(pmset -g 2>/dev/null | awk '$1 == "SleepDisabled" { print $2; exit }')"
+  case "$old" in 0|1) ;; *) old=0 ;; esac
+  # Already off machine-wide: nothing to change, and nothing to put back either.
+  if [ "$old" = "1" ]; then
+    BF_AWAKE_LIDOK=1
+    return 0
+  fi
+  info "Disabling lid sleep needs sudo; you may be asked for your password."
+  mkdir -p "$BF_STATE_DIR" 2>/dev/null
+  printf '%s\n' "$old" >"$BF_LID_FILE" 2>/dev/null
+  if sudo pmset -a disablesleep 1 >/dev/null 2>&1; then
+    BF_AWAKE_LID=1
+    BF_AWAKE_LIDOK=1
+    ok "Lid sleep disabled; the old setting is saved in $BF_LID_FILE"
+  else
+    rm -f "$BF_LID_FILE" 2>/dev/null
+    warn "sudo pmset was refused - a closed lid will still sleep this machine. Everything else in [K] still applies."
+  fi
+  return 0
+}
+
+# $1 = "prompt" to allow sudo to ask for a password.  Anything else keeps it
+# non-interactive, which is what the start-up replay wants: it must never stop a
+# launch to ask for a password about a previous run.
+awake_lid_off() {
+  local old rc=1
+  BF_AWAKE_LID=""
+  [ "$BF_OS" = "Darwin" ] || return 0
+  [ -f "$BF_LID_FILE" ] || return 0
+  old="$(head -n 1 "$BF_LID_FILE" 2>/dev/null | tr -dc '01' | cut -c1)"
+  [ -n "$old" ] || old="0"
+  if [ "${1:-}" = "prompt" ]; then
+    sudo pmset -a disablesleep "$old" >/dev/null 2>&1 && rc=0
+  else
+    sudo -n pmset -a disablesleep "$old" >/dev/null 2>&1 && rc=0
+  fi
+  [ "$rc" = "0" ] && rm -f "$BF_LID_FILE" 2>/dev/null
+  return 0
+}
+
+# A run killed before cleanup leaves lid sleep disabled machine-wide - exactly
+# the kind of change nobody would think to look for a week later. The record
+# outlives that run, so replay it at the next start.
+awake_recover() {
+  [ "$BF_OS" = "Darwin" ] || return 0
+  [ -f "$BF_LID_FILE" ] || return 0
+  awake_lid_off
+  if [ -f "$BF_LID_FILE" ]; then
+    warn "an interrupted run left lid sleep disabled - put it back with 'sudo pmset -a disablesleep 0'"
+  else
+    info "Restored the lid sleep setting left behind by an interrupted run."
+  fi
+  return 0
+}
+
+# Runs from cleanup, so it has to be safe when nothing was ever started.
+awake_stop() {
+  if [ -n "$BF_AWAKE_PID" ]; then
+    if kill -0 "$BF_AWAKE_PID" 2>/dev/null; then
+      kill "$BF_AWAKE_PID" 2>/dev/null
+    else
+      warn "the keep-awake helper was not running at the end of the session"
+    fi
+    BF_AWAKE_PID=""
+  fi
+  [ -n "$BF_AWAKE_LID" ] && awake_lid_off prompt
+  return 0
 }
 
 m_chdir() {
@@ -1312,6 +1556,7 @@ run_cmd() {
     BF_EXIT=2; return 0
   fi
   info "Starting $AI_NAME in $REPO_ROOT"
+  awake_start
   printf '\n'
   if ! cd "$REPO_ROOT" 2>/dev/null; then
     err "cannot enter working directory $REPO_ROOT - it may have been deleted or renamed"
@@ -1887,6 +2132,11 @@ parse_args() {
       --fix-env) BF_FIXENV=1; BF_ASSUME_YES=1; shift ;;
       --update-models) BF_UPDATE=1; shift ;;
       --refresh-models) BF_REFRESH=1; shift ;;
+      --awake)
+        [ $# -ge 2 ] || { err "--awake needs a value: off, system, display or lid"; BF_EXIT=2; return 0; }
+        awake_set "$2"
+        [ -n "$BF_AWBAD" ] && { err "unknown keep-awake mode '$2'; expected off, system, display or lid"; BF_EXIT=2; return 0; }
+        shift 2 ;;
       --ai)
         [ $# -ge 2 ] || { err "--ai needs a value: claude, codex, gemini or antigravity"; BF_EXIT=2; return 0; }
         case "$2" in
@@ -1977,6 +2227,7 @@ Options:
   --perm <mode>              Claude permission mode
   --extra <text>             extra flags appended verbatim
   --dir <path>               working directory to run in
+  --awake <off|system|display|lid>   keep the machine awake while it runs
   --print-cmd                print the assembled command, do not run it
   --fix-env                  add this folder to PATH permanently, then exit
   --update-models            download the model list, then exit
@@ -1993,6 +2244,8 @@ Environment:
   AI_BAT_MODELS_URL   source URL for model list updates
   AI_BAT_AUTO_UPDATE  refresh the model list at launch, at most once a day
   AI_BAT_TIMEOUT      seconds a menu waits before taking its default
+  AI_BAT_AWAKE        default keep-awake mode: off, system, display or lid
+  AI_BAT_AWAKE_MAX    seconds the keep-awake helper may run, default 86400
   NO_COLOR            disables color when set and non-empty
   FORCE_COLOR         re-enables color unless NO_COLOR is set
   CI, NO_INPUT        force non-interactive mode
@@ -2019,6 +2272,7 @@ EOF
 #  CLEANUP: every exit path arrives here
 # =============================================================================
 cleanup() {
+  awake_stop
   [ -n "$BF_COLOR" ] && printf '%s[0m%s[?25h' "$ESC" "$ESC" >&2
   [ -n "$MDL_LINES" ] && [ -f "$MDL_LINES" ] && rm -f "$MDL_LINES"
   return 0
@@ -2077,6 +2331,7 @@ main_loop() {
       ag_dirs)         m_ag_dirs ;;
       ag_prompt)       m_ag_prompt ;;
       auth_setup)      m_auth_setup ;;
+      awake)           m_awake ;;
       env_fix)         m_env_fix ;;
       update_models)   m_update_models ;;
       confirm)         m_confirm ;;
@@ -2092,11 +2347,21 @@ main_loop() {
 
 main() {
   detect_context
+
+  # AI_BAT_AWAKE preselects the keep-awake mode for every run; --awake and [K]
+  # override it per run. A value that is not one of the four is named and
+  # dropped rather than silently read as "off".
+  if [ -n "${AI_BAT_AWAKE:-}" ]; then
+    awake_set "$AI_BAT_AWAKE"
+    [ -n "$BF_AWBAD" ] && warn "AI_BAT_AWAKE is not off, system, display or lid - ignoring it"
+  fi
+
   parse_args "$@"
   [ -n "$BF_STOP" ] && exit "$BF_EXIT"
   [ "$BF_EXIT" != "0" ] && exit "$BF_EXIT"
 
   resolve_root
+  awake_recover
 
   if [ -n "$BF_FIXENV" ]; then
     env_fix_go
