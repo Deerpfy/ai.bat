@@ -57,11 +57,11 @@
                   },
                   {
                       "id":  "gpt-5.4",
-                      "desc":  "Strong model for everyday coding."
+                      "desc":  "Everyday coding - needs your own API key"
                   },
                   {
                       "id":  "gpt-5.4-mini",
-                      "desc":  "Small, fast, and cost-efficient model for simpler coding tasks."
+                      "desc":  "Simpler tasks - needs your own API key"
                   }
               ],
     "deepseek":  [
@@ -72,6 +72,10 @@
                      {
                          "id":  "deepseek-v4-flash",
                          "desc":  "DeepSeek V4 Flash - lower latency, cheaper"
+                     },
+                     {
+                         "id":  "deepseek-v4-flash-vision-exp",
+                         "desc":  "DeepSeek V4 Flash Vision - beta, images"
                      }
                  ],
     "custom":  [
