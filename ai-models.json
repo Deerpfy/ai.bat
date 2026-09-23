@@ -2,13 +2,10 @@
     "comment":  "Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown.",
     "claude":  [
                    {
-<<<<<<< Updated upstream
-=======
                        "id":  "claude-opus-5-5",
                        "desc":  "Claude Opus 5.5 - 2026-09-22"
                    },
                    {
->>>>>>> Stashed changes
                        "id":  "claude-fable-5-1",
                        "desc":  "Claude Fable 5.1 - 2026-09-01"
                    },
