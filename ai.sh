@@ -1881,13 +1881,13 @@ write_default_models() {
   "comment": "Model menus for ai.sh / ai.bat. Order = menu order; the first 9 per engine are shown. Edit by hand or run: ai.sh --update-models",
   "claude": [
     { "id": "claude-opus-5-5", "desc": "Opus 5.5 - newest Opus" },
+    { "id": "claude-sonnet-5-5", "desc": "Sonnet 5.5 - newest Sonnet" },
     { "id": "claude-opus-5", "desc": "Opus 5 - previous Opus" },
     { "id": "claude-fable-5-1", "desc": "Fable 5.1 - most capable tier" },
     { "id": "claude-fable-5", "desc": "Fable 5 - previous most capable" },
     { "id": "claude-opus-4-8", "desc": "Opus 4.8 - adaptive thinking" },
     { "id": "claude-opus-4-7", "desc": "Opus 4.7 - adaptive thinking" },
-    { "id": "claude-sonnet-5", "desc": "Sonnet 5 - near-Opus, faster" },
-    { "id": "claude-sonnet-4-6", "desc": "Sonnet 4.6 - extended + adaptive" },
+    { "id": "claude-sonnet-5", "desc": "Sonnet 5 - previous Sonnet" },
     { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" }
   ],
   "codex": [

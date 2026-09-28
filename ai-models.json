@@ -6,6 +6,10 @@
                        "desc":  "Claude Opus 5.5 - 2026-09-28"
                    },
                    {
+                       "id":  "claude-sonnet-5-5",
+                       "desc":  "Claude Sonnet 5.5 - 2026-09-28"
+                   },
+                   {
                        "id":  "claude-fable-5-1",
                        "desc":  "Claude Fable 5.1 - 2026-09-01"
                    },
