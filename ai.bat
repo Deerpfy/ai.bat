@@ -2395,15 +2395,15 @@ rem echo does not touch ERRORLEVEL, so the last menu key's value would lie.
   echo {
   echo   "comment": "Model menus for ai.bat. Order = menu order; the first 9 per engine are shown. Edit by hand or run: ai.bat --update-models",
   echo   "claude": [
-  echo     { "id": "claude-opus-5", "desc": "Opus 5 - newest Opus" },
+  echo     { "id": "claude-opus-5-5", "desc": "Opus 5.5 - newest Opus" },
+  echo     { "id": "claude-opus-5", "desc": "Opus 5 - previous Opus" },
   echo     { "id": "claude-fable-5-1", "desc": "Fable 5.1 - most capable tier" },
   echo     { "id": "claude-fable-5", "desc": "Fable 5 - previous most capable" },
   echo     { "id": "claude-opus-4-8", "desc": "Opus 4.8 - adaptive thinking" },
   echo     { "id": "claude-opus-4-7", "desc": "Opus 4.7 - adaptive thinking" },
   echo     { "id": "claude-sonnet-5", "desc": "Sonnet 5 - near-Opus, faster" },
   echo     { "id": "claude-sonnet-4-6", "desc": "Sonnet 4.6 - extended + adaptive" },
-  echo     { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" },
-  echo     { "id": "claude-opus-4-6", "desc": "Opus 4.6 - extended + adaptive" }
+  echo     { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" }
   echo   ],
   echo   "codex": [
   echo     { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },

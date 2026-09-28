@@ -294,7 +294,7 @@ its own), it is recreated with defaults on first use.
 ```json
 {
   "claude": [
-    { "id": "claude-opus-5", "desc": "Opus 5 - newest Opus" }
+    { "id": "claude-opus-5-5", "desc": "Opus 5.5 - newest Opus" }
   ],
   "codex": [
     { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" }
