@@ -2,6 +2,10 @@
     "comment":  "Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown.",
     "claude":  [
                    {
+                       "id":  "claude-haiku-5-5",
+                       "desc":  "Claude Haiku 5.5 - 2026-10-07"
+                   },
+                   {
                        "id":  "claude-opus-5-5",
                        "desc":  "Claude Opus 5.5 - 2026-09-28"
                    },

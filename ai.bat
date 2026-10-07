@@ -2403,7 +2403,7 @@ rem echo does not touch ERRORLEVEL, so the last menu key's value would lie.
   echo     { "id": "claude-opus-4-8", "desc": "Opus 4.8 - adaptive thinking" },
   echo     { "id": "claude-opus-4-7", "desc": "Opus 4.7 - adaptive thinking" },
   echo     { "id": "claude-sonnet-5", "desc": "Sonnet 5 - previous Sonnet" },
-  echo     { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" }
+  echo     { "id": "claude-haiku-5-5", "desc": "Haiku 5.5 - newest Haiku, fast" }
   echo   ],
   echo   "codex": [
   echo     { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },

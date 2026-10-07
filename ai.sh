@@ -1888,7 +1888,7 @@ write_default_models() {
     { "id": "claude-opus-4-8", "desc": "Opus 4.8 - adaptive thinking" },
     { "id": "claude-opus-4-7", "desc": "Opus 4.7 - adaptive thinking" },
     { "id": "claude-sonnet-5", "desc": "Sonnet 5 - previous Sonnet" },
-    { "id": "claude-haiku-4-5", "desc": "Haiku 4.5 - fast, cost-effective" }
+    { "id": "claude-haiku-5-5", "desc": "Haiku 5.5 - newest Haiku, fast" }
   ],
   "codex": [
     { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },
