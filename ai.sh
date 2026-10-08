@@ -1891,12 +1891,14 @@ write_default_models() {
     { "id": "claude-haiku-5-5", "desc": "Haiku 5.5 - newest Haiku, fast" }
   ],
   "codex": [
-    { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },
-    { "id": "gpt-5.6-terra", "desc": "balanced, for everyday work" },
-    { "id": "gpt-5.6-luna", "desc": "fast and affordable" },
-    { "id": "gpt-5.5", "desc": "complex coding, research, real work" },
-    { "id": "gpt-5.4", "desc": "strong for everyday coding" },
-    { "id": "gpt-5.4-mini", "desc": "small, fast, cost-efficient" }
+    { "id": "gpt-6.1-sol", "desc": "newest workhorse, coding and everyday work" },
+    { "id": "gpt-6-astra", "desc": "frontier, for the most demanding work" },
+    { "id": "gpt-6-sol", "desc": "previous workhorse" },
+    { "id": "gpt-6-luna", "desc": "fast and affordable" },
+    { "id": "gpt-5.6-sol", "desc": "older workhorse" },
+    { "id": "gpt-5.6-terra", "desc": "older, balanced" },
+    { "id": "gpt-5.6-luna", "desc": "older, fast and efficient" },
+    { "id": "gpt-5.5", "desc": "legacy coding model" }
   ]
 }
 EOF

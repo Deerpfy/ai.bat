@@ -2406,12 +2406,14 @@ rem echo does not touch ERRORLEVEL, so the last menu key's value would lie.
   echo     { "id": "claude-haiku-5-5", "desc": "Haiku 5.5 - newest Haiku, fast" }
   echo   ],
   echo   "codex": [
-  echo     { "id": "gpt-5.6-sol", "desc": "latest frontier agentic coding model" },
-  echo     { "id": "gpt-5.6-terra", "desc": "balanced, for everyday work" },
-  echo     { "id": "gpt-5.6-luna", "desc": "fast and affordable" },
-  echo     { "id": "gpt-5.5", "desc": "complex coding, research, real work" },
-  echo     { "id": "gpt-5.4", "desc": "everyday coding - needs your own key" },
-  echo     { "id": "gpt-5.4-mini", "desc": "simpler tasks - needs your own key" }
+  echo     { "id": "gpt-6.1-sol", "desc": "newest workhorse, coding and everyday work" },
+  echo     { "id": "gpt-6-astra", "desc": "frontier, for the most demanding work" },
+  echo     { "id": "gpt-6-sol", "desc": "previous workhorse" },
+  echo     { "id": "gpt-6-luna", "desc": "fast and affordable" },
+  echo     { "id": "gpt-5.6-sol", "desc": "older workhorse" },
+  echo     { "id": "gpt-5.6-terra", "desc": "older, balanced" },
+  echo     { "id": "gpt-5.6-luna", "desc": "older, fast and efficient" },
+  echo     { "id": "gpt-5.5", "desc": "legacy coding model" }
   echo   ],
   echo   "deepseek": [
   echo     { "id": "deepseek-v4-pro", "desc": "V4 Pro - reasoning and agentic work" },

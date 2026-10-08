@@ -52,28 +52,36 @@
                ],
     "codex":  [
                   {
+                      "id":  "gpt-6.1-sol",
+                      "desc":  "Latest workhorse model for coding and everyday work."
+                  },
+                  {
+                      "id":  "gpt-6-astra",
+                      "desc":  "Frontier intelligence for the most demanding work."
+                  },
+                  {
+                      "id":  "gpt-6-sol",
+                      "desc":  "Previous generation workhorse model."
+                  },
+                  {
+                      "id":  "gpt-6-luna",
+                      "desc":  "Fast and affordable model for easier tasks."
+                  },
+                  {
                       "id":  "gpt-5.6-sol",
-                      "desc":  "Latest frontier agentic coding model."
+                      "desc":  "Older generation workhorse model."
                   },
                   {
                       "id":  "gpt-5.6-terra",
-                      "desc":  "Balanced agentic coding model for everyday work."
+                      "desc":  "Older balanced model for straightforward work."
                   },
                   {
                       "id":  "gpt-5.6-luna",
-                      "desc":  "Fast and affordable agentic coding model."
+                      "desc":  "Older fast and efficient model."
                   },
                   {
                       "id":  "gpt-5.5",
-                      "desc":  "Frontier model for complex coding, research, and real-world work."
-                  },
-                  {
-                      "id":  "gpt-5.4",
-                      "desc":  "Everyday coding - needs your own API key"
-                  },
-                  {
-                      "id":  "gpt-5.4-mini",
-                      "desc":  "Simpler tasks - needs your own API key"
+                      "desc":  "Legacy coding model."
                   }
               ],
     "deepseek":  [
