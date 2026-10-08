@@ -2033,6 +2033,7 @@ except Exception:
     old = None
 
 claude, src_c = [], ""
+md = None
 if key:
     try:
         resp = get("https://api.anthropic.com/v1/models?limit=100",
@@ -2045,7 +2046,8 @@ if key:
         claude = []
 if not claude:
     try:
-        md = get("https://models.dev/api.json", None, 15)
+        if md is None:
+            md = get("https://models.dev/api.json", None, 15)
         models = (md.get("anthropic") or {}).get("models") or {}
         ordered = sorted(models.items(), key=lambda kv: str(kv[1].get("release_date", "")), reverse=True)[:9]
         claude = [{"id": k, "desc": "%s - %s" % (v.get("name", ""), v.get("release_date", ""))}
@@ -2073,13 +2075,45 @@ if not codex and old and old.get("codex"):
     codex = old["codex"]
     src_x = "kept existing - no codex cache"
 
-if not claude and not codex:
+deep, src_d = [], ""
+if md is None:
+    try:
+        md = get("https://models.dev/api.json", None, 15)
+    except Exception:
+        md = None
+if md:
+    try:
+        models = (md.get("deepseek") or {}).get("models") or {}
+        ordered = sorted(models.items(), key=lambda kv: str(kv[1].get("release_date", "")), reverse=True)[:9]
+        deep = [{"id": k, "desc": "%s - %s" % (v.get("name", ""), v.get("release_date", ""))}
+                for k, v in ordered]
+        src_d = "models.dev"
+    except Exception:
+        deep = []
+ds_key = os.environ.get("DEEPSEEK_API_KEY", "")
+if not deep and ds_key:
+    try:
+        rd = get("https://api.deepseek.com/models", {"Authorization": "Bearer " + ds_key}, 10)
+        deep = [{"id": m["id"], "desc": "available on your DeepSeek key"}
+                for m in sorted(rd.get("data", []), key=lambda m: m.get("id", ""))[:9]]
+        src_d = "DeepSeek API"
+    except Exception:
+        deep = []
+if not deep and old and old.get("deepseek"):
+    deep = old["deepseek"]
+    src_d = "kept existing - fetch failed"
+
+if not claude and not codex and not deep:
     print("   Nothing fetched - file left unchanged.")
     sys.exit(1)
 
+# The custom list is the user's own; carry it over untouched.
+cust = (old or {}).get("custom") or []
+
 doc = {"comment": "Model menus for ai.sh / ai.bat. Rebuilt by --refresh-models. "
-                  "Order = menu order; the first 9 per engine are shown.",
-       "claude": claude, "codex": codex}
+                  "Order = menu order; the first 9 per engine are shown. "
+                  "The custom list is yours and is kept as is.",
+       "claude": claude, "codex": codex, "deepseek": deep, "custom": cust}
 tmp = dst + ".new"
 with open(tmp, "w") as f:
     json.dump(doc, f, indent=4)
@@ -2089,6 +2123,8 @@ with open(tmp) as f:
 os.replace(tmp, dst)
 print("   claude: %d models - source: %s" % (len(claude), src_c))
 print("   codex:  %d models - source: %s" % (len(codex), src_x))
+print("   deepseek: %d models - source: %s" % (len(deep), src_d))
+print("   custom: %d models - kept from the existing file" % len(cust))
 print("   Wrote %s" % dst)
 PY
   if [ $? -ne 0 ]; then
