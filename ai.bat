@@ -97,7 +97,7 @@ rem name the script owns before anything reads one.
 for %%V in (
   MODEL_FLAG EFFORT_FLAG PERM_MODE CUSTOM_MODEL
   CL_SESSION CL_VERBOSE CL_ADDDIR CL_SYSPROMPT CL_MCP CL_TOOLS CL_CHROME
-  CL_WORKTREE CL_STARTUP CL_IDE CL_SID CL_SNAME CL_PR CL_DBGCATS CL_DIRS
+  CL_WORKTREE CL_STARTUP CL_IDE CL_AUTH CL_SID CL_SNAME CL_PR CL_DBGCATS CL_DIRS
   CL_APPEND CL_REPLACE CL_MCPFILE CL_TOOLLIST CL_WTNAME
   CX_BASE CX_MODEL CX_APPR CX_SEARCH CX_CD CX_PROMPT CX_NEW CX_MODEL_ID
   CX_CD_DIR CX_PROMPT_TEXT
@@ -122,6 +122,10 @@ rem quietly point a plain Claude run at that endpoint. AI_BAT_INJECTED marks
 rem those names as this script's doing; without it nothing is touched, so a
 rem hand-configured proxy survives.
 if defined AI_BAT_INJECTED call :ax_reset_env
+rem Same idea for the Claude API-key profile: the key it handed the claude
+rem process is not the user's own setting, so a nested run must not inherit it.
+if defined AI_BAT_CLAUDE_API set "ANTHROPIC_API_KEY="
+set "AI_BAT_CLAUDE_API="
 
 rem ---- accent: orange.  Override with AI_BAT_ACCENT (e.g. 33 for basic yellow)
 set "BF_ACCENT=38;5;208"
@@ -227,9 +231,13 @@ rem  CLAUDE FLOW
 rem ============================================================================
 rem ============================================================================
 :claude_flow
+rem The API-key profile borrows the endpoint engines' key screen, so a key or
+rem endpoint left over from DeepSeek or Custom API is cleared first.
+call :ax_reset_choices
 set "AI_KIND=claude"
 set "AI_NAME=Claude"
 set "CLAUDE_CONFIG_DIR="
+set "CL_AUTH="
 set "MODEL_FLAG="
 set "EFFORT_FLAG="
 set "PERM_MODE="
@@ -249,18 +257,48 @@ rem --- 0. ACCOUNT -------------------------------------------------------------
 call :header "Claude / Account"
 if not defined CLAUDE_CODE_GIT_BASH_PATH call :warn "Git Bash not found - Claude needs it on Windows. Install from https://git-scm.com/downloads/win or run [F] from the engine menu."
 call :sec "ACCOUNT"
-call :item "1" "Account 1"  "primary profile,  .claude-acc1"
-call :item "2" "Account 2"  "fallback profile, .claude-acc2"
+call :item "1" "Account 1"  "subscription, .claude-acc1"
+call :item "2" "Account 2"  "subscription, .claude-acc2"
 call :item "3" "Default"    "no account switch"
+call :item "4" "API key"    "pay per use,  .claude-api"
 call :item "A" "Auth setup" "first-time login for both accounts"
-call :foot "1 2 3   [A] auth   [B] back   [Q] quit" "default 1"
-call :menu_key "123ABQ" "1"
+call :foot "1-4   [A] auth   [B] back   [Q] quit" "default 1"
+call :menu_key "1234ABQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="B" goto :ai_select
 if "!BF_CH!"=="A" goto :auth_setup
+rem Reset first, so coming back here and picking Default really means default.
+set "CLAUDE_CONFIG_DIR="
+set "CL_AUTH="
+if "!BF_CH!"=="4" goto :cl_api
+if "!BF_CH!"=="1" set "CL_AUTH=sub"
+if "!BF_CH!"=="2" set "CL_AUTH=sub"
 if "!BF_CH!"=="1" set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-acc1"
 if "!BF_CH!"=="2" set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-acc2"
+goto :cl_model
+
+rem --- 0b. API KEY -------------------------------------------------------------
+rem Console billing instead of a subscription login. The key gets a profile of
+rem its own so it never competes with the logins in acc1/acc2, and it is saved
+rem as AI_BAT_CLAUDE_KEY rather than ANTHROPIC_API_KEY: the claude CLI prefers
+rem ANTHROPIC_API_KEY over a login, so a global one would quietly turn every
+rem subscription run into a billed one. The key screen is the endpoint engines'.
+:cl_api
+call :cl_api_init
+goto :ax_key
+
+:cl_api_init
+set "CL_AUTH=api"
+set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-api"
+set "AX_SHAPE=anthropic"
+set "AX_KEYVAR=AI_BAT_CLAUDE_KEY"
+set "AX_URL=https://api.anthropic.com"
+set "AX_PROBE=https://api.anthropic.com/v1/models"
+set "AX_PAUTH=anthropic"
+set "AX_KEYNOTE=Keys come from https://console.anthropic.com/settings/keys"
+if not defined AX_KEY call :ax_pick_up_key
+goto :eof
 
 rem --- 1. MODEL ---------------------------------------------------------------
 rem Menu entries come from ai-models.json (engine tag "claude") and are reread
@@ -287,6 +325,7 @@ call :foot "!BF_MRANGE![C] custom   [S] skip   [B] back   [Q] quit" "default !BF
 call :menu_key "!BF_MKEYS!CSBQ" "!BF_MDEF!"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" if "!CL_AUTH!"=="api" goto :ax_key
 if "!BF_CH!"=="B" goto :cl_account
 set "MODEL_FLAG="
 if "!BF_CH!"=="C" goto :cl_custom_model
@@ -298,7 +337,8 @@ goto :cl_effort
 call :header "Claude / Model / Custom"
 call :sec "AVAILABLE MODELS"
 echo(
-call :fetch_models
+if "!CL_AUTH!"=="api" call :ax_probe "   Models available on your key:"
+if not "!CL_AUTH!"=="api" call :fetch_models
 echo(
 call :note "Tip: /model inside Claude switches models mid-session."
 call :note "Blank entry keeps the previous choice."
@@ -553,10 +593,15 @@ call :sec "STARTUP MODE"
 call :item "1" "Normal"    "hooks, plugins, CLAUDE.md as usual"
 call :item "2" "Bare"      "--bare, fastest start"
 call :item "3" "Safe mode" "--safe-mode, all customizations off"
+if "!CL_AUTH!"=="api" goto :cl_startup_apinote
 if "!AI_KIND!"=="deepseek" goto :cl_startup_axnote
 if "!AI_KIND!"=="custom" goto :cl_startup_axnote
 call :note "Bare skips hooks/plugins/CLAUDE.md and needs ANTHROPIC_API_KEY."
 call :note "Account OAuth will NOT work under --bare."
+goto :cl_startup_keys
+:cl_startup_apinote
+call :note "Bare skips hooks/plugins/CLAUDE.md. Your key travels as"
+call :note "ANTHROPIC_API_KEY, so authentication still works under --bare."
 goto :cl_startup_keys
 :cl_startup_axnote
 call :note "Bare skips hooks/plugins/CLAUDE.md. Your key travels as"
@@ -1132,12 +1177,14 @@ call :menu_key "123TXBQ" "3"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="B" if "!AI_KIND!"=="custom" goto :cu_url
+if "!BF_CH!"=="B" if "!AI_KIND!"=="claude" goto :cl_account
 if "!BF_CH!"=="B" goto :ai_select
 if "!BF_CH!"=="T" goto :ax_key_test
 if "!BF_CH!"=="X" goto :ax_key_forget
 if "!BF_CH!"=="1" goto :ax_key_paste
 if "!BF_CH!"=="2" goto :ax_key_paste_save
 if not defined AX_KEY goto :ax_key_none
+if "!AI_KIND!"=="claude" goto :cl_model
 if "!AI_KIND!"=="custom" goto :cu_model
 goto :ds_model
 
@@ -1387,6 +1434,7 @@ rem second expansion pass, and that pass would also re-parse the key.
 set "AX_SRC=none"
 if "!AX_KEYVAR!"=="DEEPSEEK_API_KEY" call :ax_pick_deepseek
 if "!AX_KEYVAR!"=="AI_BAT_CUSTOM_KEY" call :ax_pick_custom
+if "!AX_KEYVAR!"=="AI_BAT_CLAUDE_KEY" call :ax_pick_claude
 goto :eof
 :ax_pick_deepseek
 if not defined DEEPSEEK_API_KEY goto :eof
@@ -1397,6 +1445,17 @@ goto :eof
 if not defined AI_BAT_CUSTOM_KEY goto :eof
 set "AX_KEY=!AI_BAT_CUSTOM_KEY!"
 set "AX_SRC=AI_BAT_CUSTOM_KEY, already in your environment"
+goto :eof
+rem A key saved by this script wins; a plain ANTHROPIC_API_KEY is the fallback.
+:ax_pick_claude
+if defined AI_BAT_CLAUDE_KEY goto :ax_pick_claude_saved
+if not defined ANTHROPIC_API_KEY goto :eof
+set "AX_KEY=!ANTHROPIC_API_KEY!"
+set "AX_SRC=ANTHROPIC_API_KEY, already in your environment"
+goto :eof
+:ax_pick_claude_saved
+set "AX_KEY=!AI_BAT_CLAUDE_KEY!"
+set "AX_SRC=AI_BAT_CLAUDE_KEY, already in your environment"
 goto :eof
 
 rem %1 = the secret. Never prints more of it than its ends.
@@ -1455,6 +1514,19 @@ goto :eof
 call :err "no model id for !AI_NAME! - pass --model, set AI_BAT_CUSTOM_MODEL, or pick one from the menu"
 set "BF_EXIT=5"
 set "BF_STOP=1"
+goto :eof
+
+rem Applied at launch only, like :ax_apply_env. A subscription pick drops any
+rem ANTHROPIC_API_KEY so the CLI uses that profile's login instead of billing
+rem the key; Default leaves the environment exactly as it found it.
+:cl_apply_auth
+if "!CL_AUTH!"=="sub" set "ANTHROPIC_API_KEY="
+if not "!CL_AUTH!"=="api" goto :eof
+if not defined AX_KEY call :ax_pick_up_key
+if not defined AX_KEY goto :ax_apply_nokey
+set "ANTHROPIC_API_KEY=!AX_KEY!"
+set "AX_KEY="
+set "AI_BAT_CLAUDE_API=1"
 goto :eof
 
 rem Undoes exactly what :ax_apply_env injected, nothing else.
@@ -1680,8 +1752,10 @@ if not defined BF_NONINTERACTIVE call :header "Launching"
 if not defined CMD goto :run_nocmd
 if "!AI_KIND!"=="deepseek" call :ax_apply_env
 if "!AI_KIND!"=="custom" call :ax_apply_env
+if "!AI_KIND!"=="claude" call :cl_apply_auth
 if defined BF_STOP goto :cleanup
 call :info "Starting !AI_NAME! in !REPO_ROOT!"
+if "!AI_KIND!"=="claude" if "!CL_AUTH!"=="api" call :info "Billing the API key, not a subscription"
 if "!AI_KIND!"=="deepseek" call :ax_launch_note
 if "!AI_KIND!"=="custom" call :ax_launch_note
 call :awake_start
@@ -3015,8 +3089,11 @@ shift
 goto :parse_args
 :args_account
 if "%~2"=="" goto :args_val_missing
+if "%~2"=="1" set "CL_AUTH=sub"
+if "%~2"=="2" set "CL_AUTH=sub"
 if "%~2"=="1" set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-acc1"
 if "%~2"=="2" set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-acc2"
+if /i "%~2"=="api" call :cl_api_init
 shift
 shift
 goto :parse_args
@@ -3149,7 +3226,7 @@ echo(  environment instead ^(DEEPSEEK_API_KEY, or the AI_BAT_CUSTOM_* set^).
 echo(
 echo(Options:
 echo(  --ai ^<claude^|codex^|gemini^|antigravity^|deepseek^|custom^>   engine to launch
-echo(  --account ^<1^|2^>            Claude config profile to use
+echo(  --account ^<1^|2^|api^>        Claude profile; api bills AI_BAT_CLAUDE_KEY
 echo(  --model ^<id^>               model id passed to the engine
 echo(  --effort ^<low^|medium^|high^|xhigh^|max^>     any claude-driven engine
 echo(  --perm ^<mode^>              Claude permission mode

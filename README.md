@@ -379,6 +379,18 @@ the OAuth flow follows whichever browser is already signed in. Both accounts sho
 be your own; check your provider's terms before using this to get around usage
 limits.
 
+Option [4] API key runs Claude on pay-per-use Console billing instead of a
+subscription. It uses its own profile, `%USERPROFILE%\.claude-api`, and the same key
+screen as DeepSeek and Custom API: paste a key for one run, paste and save it, test it
+against `https://api.anthropic.com/v1/models`, or forget the saved one. A saved key is
+stored as `AI_BAT_CLAUDE_KEY`, not `ANTHROPIC_API_KEY`, because the claude CLI prefers
+`ANTHROPIC_API_KEY` over a login and a global one would bill every subscription run.
+An existing `ANTHROPIC_API_KEY` is still picked up as the fallback. The key is set as
+`ANTHROPIC_API_KEY` for the launched process only. Headless, use `--account api`.
+
+Picking Account 1 or 2 drops any `ANTHROPIC_API_KEY` for that run, so the profile's
+subscription login is what gets used. Default leaves the environment untouched.
+
 No credentials are stored in this repo. They stay in those config directories.
 
 ## Notes
