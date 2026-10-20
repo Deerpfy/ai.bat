@@ -97,7 +97,7 @@ rem name the script owns before anything reads one.
 for %%V in (
   MODEL_FLAG EFFORT_FLAG PERM_MODE CUSTOM_MODEL
   CL_SESSION CL_VERBOSE CL_ADDDIR CL_SYSPROMPT CL_MCP CL_TOOLS CL_CHROME
-  CL_WORKTREE CL_STARTUP CL_IDE CL_AUTH CL_SID CL_SNAME CL_PR CL_DBGCATS CL_DIRS
+  CL_WORKTREE CL_STARTUP CL_IDE CL_AUTH CL_PRINT CL_PROMPT CL_SID CL_SNAME CL_PR CL_DBGCATS CL_DIRS
   CL_APPEND CL_REPLACE CL_MCPFILE CL_TOOLLIST CL_WTNAME
   CX_BASE CX_MODEL CX_APPR CX_SEARCH CX_CD CX_PROMPT CX_NEW CX_MODEL_ID
   CX_CD_DIR CX_PROMPT_TEXT
@@ -271,6 +271,8 @@ if "!BF_CH!"=="A" goto :auth_setup
 rem Reset first, so coming back here and picking Default really means default.
 set "CLAUDE_CONFIG_DIR="
 set "CL_AUTH="
+set "CL_PRINT="
+set "CL_PROMPT="
 if "!BF_CH!"=="4" goto :cl_api
 if "!BF_CH!"=="1" set "CL_AUTH=sub"
 if "!BF_CH!"=="2" set "CL_AUTH=sub"
@@ -286,6 +288,21 @@ rem ANTHROPIC_API_KEY over a login, so a global one would quietly turn every
 rem subscription run into a billed one. The key screen is the endpoint engines'.
 :cl_api
 call :cl_api_init
+
+:cl_api_mode
+call :header "Claude / API mode"
+call :sec "RUN MODE"
+call :item "1" "Classic"   "claude, interactive session"
+call :item "2" "claude -p" "print a response, then exit"
+call :note "Both modes ask for an API key: use once or paste and save."
+call :foot "1 2   [B] back   [Q] quit" "default 1"
+call :menu_key "12BQ" "1"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :cl_account
+set "CL_PRINT="
+set "CL_PROMPT="
+if "!BF_CH!"=="2" set "CL_PRINT= -p"
 goto :ax_key
 
 :cl_api_init
@@ -630,6 +647,18 @@ if "!BF_CH!"=="B" goto :cl_startup
 set "CL_IDE="
 if "!BF_CH!"=="2" set "CL_IDE= --ide"
 goto :confirm
+
+rem The print prompt is the last input, after READY / Launch.
+:cl_api_prompt
+call :header "Claude / API prompt"
+call :sec "PROMPT"
+call :opnote
+call :note "Press Enter to send. Blank returns to READY."
+call :ask CL_PROMPT "Prompt: "
+if not defined CL_PROMPT goto :confirm
+if defined AI_EDITED set "CMD=!CMD! "!CL_PROMPT!""
+call :build
+goto :run
 
 
 rem ============================================================================
@@ -1177,7 +1206,7 @@ call :menu_key "123TXBQ" "3"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="B" if "!AI_KIND!"=="custom" goto :cu_url
-if "!BF_CH!"=="B" if "!AI_KIND!"=="claude" goto :cl_account
+if "!BF_CH!"=="B" if "!AI_KIND!"=="claude" goto :cl_api_mode
 if "!BF_CH!"=="B" goto :ai_select
 if "!BF_CH!"=="T" goto :ax_key_test
 if "!BF_CH!"=="X" goto :ax_key_forget
@@ -1419,7 +1448,7 @@ for %%V in (
   AX_COMPACT AX_KEYNOTE AX_PROBE AX_PAUTH AX_CLI AX_URLHINT AX_URLSHOW AX_IN
   MODEL_FLAG EFFORT_FLAG PERM_MODE
   CL_SESSION CL_VERBOSE CL_ADDDIR CL_SYSPROMPT CL_MCP CL_TOOLS CL_CHROME
-  CL_WORKTREE CL_STARTUP CL_IDE
+  CL_WORKTREE CL_STARTUP CL_IDE CL_PRINT CL_PROMPT
   CX_MODEL CX_APPR CX_SEARCH CX_CD CX_PROMPT CX_NEW
 ) do set "%%V="
 set "CLAUDE_CONFIG_DIR="
@@ -1656,6 +1685,8 @@ if "!AI_KIND!"=="claude" if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
 if "!AI_KIND!"=="claude" if defined EFFORT_FLAG set "CMD=!CMD! !EFFORT_FLAG!"
 set "CMD=!CMD!!CL_SESSION!!CL_VERBOSE!!CL_ADDDIR!!CL_SYSPROMPT!!CL_MCP!"
 set "CMD=!CMD!!CL_TOOLS!!CL_CHROME!!CL_WORKTREE!!CL_STARTUP!!CL_IDE!!BF_EXTRA!"
+if defined CL_PRINT set "CMD=!CMD!!CL_PRINT!"
+if defined CL_PRINT if defined CL_PROMPT set "CMD=!CMD! "!CL_PROMPT!""
 goto :eof
 
 rem A custom provider is described entirely on the command line, so the user's
@@ -1748,6 +1779,7 @@ if "!BF_CH!"=="Y" goto :run
 goto :confirm
 
 :run
+if not defined BF_NONINTERACTIVE if "!AI_KIND!"=="claude" if defined CL_PRINT if not defined CL_PROMPT goto :cl_api_prompt
 if not defined BF_NONINTERACTIVE call :header "Launching"
 if not defined CMD goto :run_nocmd
 if "!AI_KIND!"=="deepseek" call :ax_apply_env
@@ -1768,6 +1800,26 @@ set "BF_EXIT=!ERRORLEVEL!"
 popd
 echo(
 call :info "!AI_NAME! session ended with exit code !BF_EXIT!"
+if defined BF_NONINTERACTIVE goto :cleanup
+if "!AI_KIND!"=="claude" if "!CL_AUTH!"=="api" if defined CL_PRINT goto :cl_api_repeat
+goto :cleanup
+
+:cl_api_repeat
+call :awake_stop
+rem Auth clears AX_KEY before launch. Reuse the key that just ran, including
+rem an unsaved key that differs from a previously saved one.
+set "AX_KEY=!ANTHROPIC_API_KEY!"
+echo(
+call :sec "NEXT ACTION"
+call :item "R" "Repeat prompt" "send the same prompt again"
+call :item "N" "New prompt"    "keep the settings and API key"
+call :item "Q" "Quit"          "finish"
+call :foot "[R] repeat   [N] new prompt   [Q] quit" "default Q"
+call :menu_key "RNQ" "Q"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="R" goto :run
+if "!BF_CH!"=="N" set "AI_EDITED="
+if "!BF_CH!"=="N" goto :cl_api_prompt
 goto :cleanup
 :run_nocmd
 call :err "no command was built; pick an engine first"
@@ -2008,9 +2060,9 @@ goto :eof
 call :warn "an interrupted run left the lid-close action switched off and it could not be restored - start ai.bat as administrator once to put it back"
 goto :eof
 
-rem Runs from :cleanup, so it has to be safe when nothing was ever started. The
-rem pid file is written by the keeper itself and deleted when it releases, so a
-rem missing file here means the block was not in force at the end.
+rem Runs after each print response and from :cleanup, so it has to be safe when
+rem nothing was ever started. The keeper writes its pid file and deletes it when
+rem it releases, so a missing file means the block was not in force at the end.
 :awake_stop
 if not defined BF_AWAKE_PID goto :awake_stop_lid
 if exist "!BF_AWAKE_PID!" goto :awake_stop_kill
@@ -2022,6 +2074,8 @@ del "!BF_AWAKE_PID!" >nul 2>&1
 :awake_stop_files
 if defined BF_AWAKE_PS if exist "!BF_AWAKE_PS!" del "!BF_AWAKE_PS!" >nul 2>&1
 :awake_stop_lid
+set "BF_AWAKE_PID="
+set "BF_AWAKE_PS="
 if defined BF_AWAKE_LID call :awake_lid_off
 goto :eof
 
