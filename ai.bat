@@ -2614,7 +2614,18 @@ if not exist "!MODELS_FILE!" goto :auto_update_do
 forfiles /p "!SCRIPT_DIR!" /m ai-models.json /d -1 >nul 2>&1 || goto :eof
 :auto_update_do
 call :info "model list is stale - refreshing (AI_BAT_AUTO_UPDATE is set)"
+rem With an Anthropic key the live rebuild runs instead of the published URL, so
+rem models the key can reach (CVP-gated Mythos, new Fable) are picked up without a
+rem hand edit and the published list cannot wipe them out.
+set "AUTO_KEY="
+if defined ANTHROPIC_API_KEY set "AUTO_KEY=1"
+findstr /c:"apiKey" "%APPDATA%\claude\config.json" >nul 2>&1
+if not errorlevel 1 set "AUTO_KEY=1"
+if defined AUTO_KEY goto :auto_update_live
 call :models_update_go
+goto :eof
+:auto_update_live
+call :models_refresh_go
 goto :eof
 
 rem Shared fetch. Prints its own status lines and leaves MDL_UPD_RC 0/1.
@@ -2678,7 +2689,7 @@ echo if ($key) { >> "!PS_SCRIPT!"
 echo     try { >> "!PS_SCRIPT!"
 echo         $h = @{ 'x-api-key' = $key; 'anthropic-version' = '2023-06-01' } >> "!PS_SCRIPT!"
 echo         $resp = Invoke-RestMethod -Uri 'https://api.anthropic.com/v1/models?limit=100' -Headers $h -TimeoutSec 10 >> "!PS_SCRIPT!"
-echo         $claude = @($resp.data ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
+echo         $claude = @($resp.data ^| Sort-Object { [string]$_.created_at } -Descending ^| Select-Object -First 9 ^| ForEach-Object { >> "!PS_SCRIPT!"
 echo             $d = [string]$_.created_at; if ($d.Length -ge 10) { $d = $d.Substring(0,10) } >> "!PS_SCRIPT!"
 echo             [pscustomobject]@{ id = $_.id; desc = ([string]$_.display_name + ' - ' + $d) } }) >> "!PS_SCRIPT!"
 echo         $srcC = 'Anthropic API' >> "!PS_SCRIPT!"

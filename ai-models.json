@@ -2,6 +2,14 @@
     "comment":  "Model menus for ai.bat. Rebuilt by --refresh-models. Order = menu order; the first 9 per engine are shown.",
     "claude":  [
                    {
+                       "id":  "claude-fable-5-2",
+                       "desc":  "Claude Fable 5.2 - most capable widely released"
+                   },
+                   {
+                       "id":  "claude-mythos-5-2",
+                       "desc":  "Claude Mythos 5.2 - CVP access only"
+                   },
+                   {
                        "id":  "claude-haiku-5-5",
                        "desc":  "Claude Haiku 5.5 - 2026-10-07"
                    },

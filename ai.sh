@@ -1947,7 +1947,14 @@ auto_update_check() {
     find "$MODELS_FILE" -mtime +0 2>/dev/null | grep -q . || return 0
   fi
   info "model list is stale - refreshing (AI_BAT_AUTO_UPDATE is set)"
-  models_update_go
+  # With an Anthropic key the live rebuild runs instead of the published URL, so
+  # models the key can reach (CVP-gated Mythos, new Fable) load automatically and
+  # the published list cannot wipe them out.
+  if [ -n "$(anthropic_key | head -1)" ] && have python3; then
+    models_refresh_go
+  else
+    models_update_go
+  fi
 }
 
 json_valid() {
@@ -2038,9 +2045,12 @@ if key:
     try:
         resp = get("https://api.anthropic.com/v1/models?limit=100",
                    {"x-api-key": key, "anthropic-version": "2023-06-01"}, 10)
+        # Newest first, so models the key just gained (CVP-gated Mythos, new Fable)
+        # land inside the first 9 menu slots.
+        newest = sorted(resp.get("data", []), key=lambda m: str(m.get("created_at", "")), reverse=True)
         claude = [{"id": m["id"],
                    "desc": "%s - %s" % (m.get("display_name", ""), str(m.get("created_at", ""))[:10])}
-                  for m in resp.get("data", [])[:9]]
+                  for m in newest[:9]]
         src_c = "Anthropic API"
     except Exception:
         claude = []
