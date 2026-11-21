@@ -119,6 +119,9 @@ would still run the agent in the folder `ai.bat` lives in.
   [R] right-click menu and [K] keep awake
 - At least one agent CLI on `PATH`: `claude`, `codex`, `gemini`, or `agy`
   (the DeepSeek and Custom API engines reuse `claude` or `codex` - see below)
+- Node.js 18+ on `PATH` for the multi-folder launch and the peer hook (see
+  [Several folders at once](#several-folders-at-once)). Without it, everything
+  else works as before.
 - Git Bash if you use Claude Code. The script looks in the usual install locations
   (`%LOCALAPPDATA%\Programs\Git`, `Program Files`, scoop, or anything
   `where bash.exe` finds) and sets `CLAUDE_CODE_GIT_BASH_PATH` for you.
@@ -182,6 +185,97 @@ MacBook running in clamshell, and puts it back afterwards - or at the next start
 the run was interrupted. On Linux all four modes are a `systemd-inhibit` lock, with
 [4] adding `handle-lid-switch` to it; screen blanking there belongs to the desktop,
 which logind only sees as idle, so [2] and [3] can behave the same.
+
+## Several folders at once
+
+A product is often split across sibling folders:
+
+```
+C:\My Projects\
+  acme.com\          <- you start ai.bat here
+  api.acme.com\
+  mcp.acme.com\
+  acme.com-dev2\
+```
+
+When the working folder has related folders next to it, the Claude, Codex,
+DeepSeek and Custom API flows show two more screens before Confirm. You pick the
+settings once, and each ticked folder opens in its own Windows Terminal tab with
+those settings. If Windows Terminal is not installed, each folder opens in its
+own console window.
+
+**Related folders.** The product name is the label before the last dot of the
+folder name: `acme.com` and `api.acme.com` both give `acme`,
+`other.net` gives `other`. A sibling folder is related when one of
+its labels, split on `.` and `-`, equals that name, so `git-acme` and
+`acme.com-dev2` count. A product name shorter than 3 characters matches
+nothing.
+
+**Folders screen.** The first 9 related folders are shown as checkboxes. A
+digit toggles one, `[A]` ticks all, `[N]` clears all, `[C]` goes on. The first
+time, folders shaped like `<label>.<this folder>` (`api.acme.com`) are
+pre-ticked. After that, ai.bat remembers what you ticked for each product in
+`%LOCALAPPDATA%\ai-launcher\groups\`. If you tick nothing, the run is a normal
+one-folder run.
+
+**Session names.** Every session gets the name `<folder>-<model>`:
+`acme.com-opus-5.5`, `api.acme.com-mythos-5.2`, `mcp.acme.com-gpt-6.2-astra`.
+This also applies to a one-folder run in a folder that has related folders. A
+name you type, or a session you resume, on the Session screen wins over it. A
+resumed, continued or forked session is always a one-folder run.
+
+**Link sessions screen.** Only the folder hook is on the first time; after that,
+the screen opens with your last choice for the product. Nothing is written
+before you confirm each change:
+
+```
+  LINK SESSIONS
+   [1] [x] Peer hook in each folder       .claude\settings.json, Claude only
+   [2] [ ] Peer hook for this account     C:\Users\you\.claude-acc1
+   [3] [ ] Startup note                   peer list given at start
+```
+
+- **Peer hook in each folder** copies `session-peers.mjs` to
+  `<folder>\.claude\hooks\` and adds three hook entries to
+  `<folder>\.claude\settings.json`. Your other settings and hooks stay as they
+  are. It travels with the repo.
+- **Peer hook for this account** adds the same entries to the settings of the
+  account you picked (`.claude-acc1`, `.claude-acc2`, `.claude-api` or
+  `~\.claude`). They point at the `session-peers.mjs` next to ai.bat, and they
+  work in every folder. For Codex, the entries go into `CODEX_HOME\hooks.json`.
+  ai.bat reads `CODEX_HOME` from a `codex.cmd` wrapper if your wrapper sets it.
+  Codex skips a new hook until you trust it once with `/hooks` in Codex.
+- **Startup note** gives each session the list of the sessions started with it.
+  For Claude this is `--append-system-prompt`, which is skipped if you already
+  set a system prompt. For Codex it is `-c developer_instructions=...`, which
+  replaces any `developer_instructions` in your `config.toml` for that session.
+  The note does not change after start.
+
+For every target that is not up to date, ai.bat shows the exact changes and asks
+Y or N first. A settings file with a JSON error is reported and never written.
+An older or different `session-peers.mjs` (for example a hand-made copy) is shown
+as such, and Y replaces it.
+
+**What the hook does.** On session start, and on any prompt where the set of
+peers changed, it tells the session which peer sessions are live on this machine
+now: their name, folder and state. A peer is a live session in a related folder.
+It does not have to come from the same launch, so a Mythos session you start
+later for one folder is seen by the others and sees them too. A peer whose name
+contains `mythos` is tagged `[MYTHOS]`, and the session is told to message it
+only when you ask. Claude peers are reached with SendMessage. Codex sessions
+are listed but cannot be messaged yet. The hook reads Claude Code's session
+registry and ai.bat's own registry of the Codex sessions it started
+(`%LOCALAPPDATA%\ai-launcher\sessions\`). On any error it prints nothing.
+
+**Keys and keep-awake.** No key is written to any file or command line. Each tab
+reads a saved key (`AI_BAT_CLAUDE_KEY`, `DEEPSEEK_API_KEY`, `AI_BAT_CUSTOM_KEY`)
+from your user environment. If you pasted a key for this run only, ai.bat asks
+you to save it or to start this folder alone. Keep-awake is held by the first tab
+only.
+
+**Dry run.** `set AI_BAT_GROUP_DRYRUN=1` before you start ai.bat. The group goes
+through every screen and writes the tab files, but it prints the `wt` command
+and does not open anything.
 
 ## Bring your own endpoint
 

@@ -12,7 +12,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ---- identity --------------------------------------------------------------
 set "BF_NAME=AI LAUNCHER"
-set "BF_VERSION=2.5"
+set "BF_VERSION=2.6"
 
 rem Captured here, at the top level, on purpose: inside a "call :label" the %0
 rem token refers to the label, not to the script, so %~dp0 and %~nx0 are only
@@ -114,7 +114,12 @@ for %%V in (
   BF_CTX_ON BF_CTX_TAG BF_CTX_PATH BF_CTX_HAVE BF_CTX_RC BF_CTXSET
   BF_AWAKE_PID BF_AWAKE_PS BF_AWAKE_LID BF_AWAKE_TAG BF_AWBAD BF_AWAKE_RC
   AI_BAT_LID_FILE AI_BAT_AWAKE_PIDFILE AI_BAT_AWAKE_DISPLAY AI_BAT_AWAKE_LIFE
+  BF_CHILD BF_CK BF_CKOK BF_CHILD_REG AWAKE_ROLE AI_BAT_SESSION_NAME AI_BAT_REG_ID
+  CL_AUTONAME GRP_ON GRP_NOTE GRP_PRODUCT GRP_LINK GRP_MAINNAME GRP_BIN GRP_MODEL
+  GRP_PARENT GRP_SHOWN GRP_L1 GRP_L2 GRP_L3 GRP_ACC GRP_ACCKIND GRP_RESUME
+  GRP_ENV GRP_BASECMD GRP_DIRS GRP_NAMES GRP_STARTED GRP_VIA GRP_IERR REPO_LEAF
 ) do set "%%V="
+set "GRP_COUNT=0"
 
 rem An endpoint engine hands Anthropic-shaped names to the claude process it
 rem starts, so an ai.bat opened from inside that session would inherit them and
@@ -153,6 +158,10 @@ if not "!BF_EXIT!"=="0" goto :cleanup
 
 call :resolve_root
 call :detect_git_bash
+rem A group tab carries its whole run in the file it was handed; it skips the
+rem menus, and only the tab that holds keep-awake replays the lid restore, so
+rem one tab cannot undo the lid setting another tab switched off.
+if defined BF_CHILD goto :child_run
 call :awake_recover
 
 if defined BF_FIXENV goto :env_fix_go
@@ -196,6 +205,10 @@ set "AI_KIND="
 set "AI_NAME="
 set "AI_EDITED="
 set "CMD="
+set "GRP_ON="
+set "GRP_COUNT=0"
+set "GRP_NOTE="
+set "CL_AUTONAME="
 call :ctx_state
 call :header "Select engine"
 call :sec "ENGINE"
@@ -646,7 +659,7 @@ if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="B" goto :cl_startup
 set "CL_IDE="
 if "!BF_CH!"=="2" set "CL_IDE= --ide"
-goto :confirm
+goto :grp_entry
 
 rem The print prompt is the last input, after READY / Launch.
 :cl_api_prompt
@@ -787,7 +800,7 @@ if defined CX_CD_DIR set "CX_CD= -C "!CX_CD_DIR!""
 
 :cx_prompt
 set "CX_PROMPT="
-if not "!CX_NEW!"=="1" goto :confirm
+if not "!CX_NEW!"=="1" goto :grp_entry
 call :header "Codex / Initial prompt"
 call :sec "INITIAL PROMPT"
 call :item "1" "None"   "start interactive"
@@ -797,11 +810,11 @@ call :menu_key "12BQ" "1"
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
 if "!BF_CH!"=="B" goto :cx_cd
-if not "!BF_CH!"=="2" goto :confirm
+if not "!BF_CH!"=="2" goto :grp_entry
 call :opnote
 call :ask CX_PROMPT_TEXT "Prompt: "
 if defined CX_PROMPT_TEXT set "CX_PROMPT= "!CX_PROMPT_TEXT!""
-goto :confirm
+goto :grp_entry
 
 
 rem ============================================================================
@@ -1684,6 +1697,9 @@ rem only fight them, so --model and --effort are left off that command line.
 if "!AI_KIND!"=="claude" if defined MODEL_FLAG set "CMD=!CMD! !MODEL_FLAG!"
 if "!AI_KIND!"=="claude" if defined EFFORT_FLAG set "CMD=!CMD! !EFFORT_FLAG!"
 set "CMD=!CMD!!CL_SESSION!!CL_VERBOSE!!CL_ADDDIR!!CL_SYSPROMPT!!CL_MCP!"
+rem A folder with related folders names its session <folder>-<model> unless the
+rem Session screen already chose a name or a session to resume (:grp_entry).
+if defined CL_AUTONAME if not defined CL_SESSION set "CMD=!CMD! -n "!CL_AUTONAME!""
 set "CMD=!CMD!!CL_TOOLS!!CL_CHROME!!CL_WORKTREE!!CL_STARTUP!!CL_IDE!!BF_EXTRA!"
 if defined CL_PRINT set "CMD=!CMD!!CL_PRINT!"
 if defined CL_PRINT if defined CL_PROMPT set "CMD=!CMD! "!CL_PROMPT!""
@@ -1721,22 +1737,36 @@ rem ============================================================================
 :confirm
 call :awake_tag
 call :header "Confirm"
+if defined GRP_ON call :grp_sessions
+if defined GRP_NOTE call :note "!GRP_NOTE!"
 call :sec "READY"
-call :item "Y" "Launch"       "run the command above"
+if defined GRP_ON call :item "Y" "Launch"   "start every session listed above"
+if not defined GRP_ON call :item "Y" "Launch" "run the command above"
 call :item "E" "Edit command" "hand-edit before running"
 call :item "D" "Change dir"   "pick a different working directory"
 call :item "K" "Keep awake"   "!BF_AWAKE_TAG!"
+if not "!GRP_COUNT!"=="0" call :item "G" "Folders" "pick the related folders again"
 call :item "R" "Engine menu"  "start over"
+if not "!GRP_COUNT!"=="0" goto :confirm_keys_grp
 call :foot "[Y] launch  [E] edit  [D] dir  [K] awake  [R] menu" "[Q] or timeout"
 call :menu_key "YEDKRQ" "Q"
+goto :confirm_pick
+:confirm_keys_grp
+call :foot "[Y] go [E] edit [D] dir [K] awake [G] dirs [R] menu" "[Q] or timeout"
+call :menu_key "YEDKGRQ" "Q"
+:confirm_pick
 if defined BF_STOP goto :cleanup
 if "!BF_CH!"=="Q" goto :quit
-if "!BF_CH!"=="Y" goto :run
+if "!BF_CH!"=="G" goto :grp_folders
+if "!BF_CH!"=="Y" goto :confirm_go
 if "!BF_CH!"=="E" goto :edit
 if "!BF_CH!"=="D" goto :chdir
 if "!BF_CH!"=="K" goto :awake_menu
 if "!BF_CH!"=="R" goto :ai_select
 goto :unreachable
+:confirm_go
+if defined GRP_ON goto :grp_launch
+goto :run
 
 :chdir
 call :header "Working directory"
@@ -1751,7 +1781,8 @@ if not defined NEW_ROOT goto :confirm
 if /i "!NEW_ROOT!"=="S" set "NEW_ROOT=!SCRIPT_DIR!"
 if not exist "!NEW_ROOT!\." goto :chdir_bad
 set "REPO_ROOT=!NEW_ROOT!"
-goto :confirm
+rem A new folder has its own related folders and its own session name.
+goto :grp_entry
 :chdir_bad
 call :err "not a directory: !NEW_ROOT! - check the path and try again"
 call :hold
@@ -1775,7 +1806,7 @@ call :sec "UPDATED"
 call :foot "[Y] launch   [N] back" "timeout = back"
 call :menu_key "YN" "N"
 if defined BF_STOP goto :cleanup
-if "!BF_CH!"=="Y" goto :run
+if "!BF_CH!"=="Y" goto :confirm_go
 goto :confirm
 
 :run
@@ -1829,6 +1860,340 @@ goto :cleanup
 call :err "cannot enter working directory !REPO_ROOT! - it may have been deleted or renamed"
 set "BF_EXIT=5"
 goto :cleanup
+
+rem ============================================================================
+rem  GROUP TAB (--child <file>)
+rem  One tab of a multi-folder launch. The parent ai.bat made every choice; the
+rem  file holds them as KEY=VALUE lines, never a key. Only the names below are
+rem  taken, so a stray line cannot set an arbitrary variable. ai-group.mjs
+rem  refuses "!" in a value, which is what makes delayed expansion safe here.
+rem ============================================================================
+:child_run
+if not exist "!BF_CHILD!" goto :child_nofile
+for /f "usebackq tokens=1,* delims==" %%A in ("!BF_CHILD!") do (
+  set "BF_CKOK="
+  for %%W in (AI_KIND AI_NAME CMD CLAUDE_CONFIG_DIR CL_AUTH AX_SHAPE AX_URL AX_KEYVAR AX_MODEL AX_FAST AX_EFFORT AX_COMPACT REPO_ROOT AI_BAT_SESSION_NAME BF_AWAKE AWAKE_ROLE) do if /i "%%A"=="%%W" set "BF_CKOK=1"
+  if defined BF_CKOK (set "%%A=%%B") else call :warn "ignoring unknown key %%A in !BF_CHILD!"
+)
+if not defined CMD goto :run_nocmd
+rem The command was built by the parent; never rebuild over it.
+set "AI_EDITED=1"
+rem A tab opened by a Windows Terminal that was already running carries that
+rem terminal's environment, not ours, so a key saved a minute ago may be absent.
+if defined AX_KEYVAR call :child_key_reload
+if "!AWAKE_ROLE!"=="holder" call :awake_recover
+if /i "!CMD:~0,5!"=="codex" call :child_register
+goto :run
+:child_key_reload
+for %%V in (!AX_KEYVAR!) do if defined %%V goto :eof
+for /f "skip=2 tokens=2,*" %%a in ('reg query HKCU\Environment /v !AX_KEYVAR! 2^>nul') do set "!AX_KEYVAR!=%%b"
+goto :eof
+:child_register
+where node >nul 2>&1 || goto :eof
+rem The id names this one session (name plus pid); codex inherits it as
+rem AI_BAT_REG_ID, which is how its peer hook finds its own record.
+for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" register "!AI_BAT_SESSION_NAME!" "!REPO_ROOT!" codex "!AX_MODEL!" 2^>nul`) do if "%%A"=="ID" set "BF_CHILD_REG=%%B"
+if defined BF_CHILD_REG set "AI_BAT_REG_ID=!BF_CHILD_REG!"
+goto :eof
+:child_nofile
+call :err "group tab file not found: !BF_CHILD! - start the group again from ai.bat"
+set "BF_EXIT=5"
+goto :cleanup
+
+
+rem ============================================================================
+rem  MULTI-FOLDER GROUP
+rem  A product split across sibling folders (acme.com, api.acme.com,
+rem  mcp.acme.com) starts as one group: the same settings, one tab per
+rem  folder, each session named <folder>-<model>. ai-group.mjs finds the
+rem  folders, names the sessions, installs the peer hook and opens the tabs;
+rem  this section is only the screens around it. Every flow that can run a
+rem  group ends here instead of at :confirm, and anything that cannot (Gemini,
+rem  Antigravity, -p, a resumed session, a hand-edited command) passes straight
+rem  through, so those runs are exactly what they were before.
+rem ============================================================================
+:grp_entry
+set "GRP_ON="
+set "GRP_COUNT=0"
+set "GRP_NOTE="
+set "CL_AUTONAME="
+set "GRP_MAINNAME="
+set "GRP_INST=0"
+set "GRP_SKIP=0"
+set "GRP_FAIL=0"
+if defined AI_EDITED goto :confirm
+if "!AI_KIND!"=="gemini" goto :confirm
+if "!AI_KIND!"=="agy" goto :confirm
+if defined CL_PRINT goto :confirm
+if defined CX_CD goto :confirm
+call :grp_engine
+if "!GRP_BIN!"=="codex" if not "!CX_NEW!"=="1" goto :confirm
+where node >nul 2>&1 || goto :grp_nonode
+rem A trailing backslash, "." or a relative path would leave the leaf empty and
+rem make the parent the folder itself, so the path is made absolute first.
+for %%D in ("!REPO_ROOT!\.") do set "REPO_ROOT=%%~fD"
+for %%D in ("!REPO_ROOT!") do set "REPO_LEAF=%%~nxD"
+for %%D in ("!REPO_ROOT!") do set "GRP_PARENT=%%~dpD"
+if "!GRP_PARENT:~-1!"=="\" set "GRP_PARENT=!GRP_PARENT:~0,-1!"
+call :grp_discover
+if not defined GRP_PRODUCT set "GRP_COUNT=0"
+if "!GRP_COUNT!"=="0" goto :confirm
+rem A resume, continue, fork or PR session belongs to one folder only. A
+rem name typed on the Session screen is kept for the main folder.
+set "GRP_RESUME="
+if defined CL_SESSION if not "!CL_SESSION:~0,4!"==" -n " set "GRP_RESUME=1"
+if defined GRP_RESUME set "GRP_NOTE=Related folders found, but a multi-folder launch needs a new session."
+if defined GRP_RESUME set "GRP_COUNT=0"
+if defined GRP_RESUME goto :confirm
+if defined CL_SESSION set "GRP_MAINNAME=!CL_SNAME!"
+if not defined GRP_MAINNAME call :grp_name "!REPO_LEAF!" GRP_MAINNAME
+if not defined CL_SESSION if "!GRP_BIN!"=="claude" set "CL_AUTONAME=!GRP_MAINNAME!"
+goto :grp_folders
+:grp_nonode
+set "GRP_NOTE=Node.js not found - multi-folder launch and automatic session names are off."
+goto :confirm
+
+rem Which binary runs, and the model id that goes into the session name.
+:grp_engine
+set "GRP_BIN=claude"
+set "GRP_MODEL="
+if "!AI_KIND!"=="codex" set "GRP_BIN=codex"
+if "!AI_KIND!"=="custom" if "!AX_SHAPE!"=="openai" set "GRP_BIN=codex"
+if "!AI_KIND!"=="claude" if defined MODEL_FLAG set "GRP_MODEL=!MODEL_FLAG:~8!"
+if "!AI_KIND!"=="deepseek" set "GRP_MODEL=!AX_MODEL!"
+if "!AI_KIND!"=="custom" set "GRP_MODEL=!AX_MODEL!"
+if "!AI_KIND!"=="codex" if defined CX_MODEL set "GRP_MODEL=!CX_MODEL:~4!"
+goto :eof
+
+:grp_discover
+for /l %%i in (1,1,9) do (
+  set "GRP_REL%%i="
+  set "GRP_TICK%%i="
+  set "GRP_NAME%%i="
+)
+set "GRP_PRODUCT="
+set "GRP_COUNT=0"
+set "GRP_LINK="
+for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" discover "!REPO_ROOT!" 2^>nul`) do set "GRP_%%A=%%B"
+set "GRP_SHOWN=!GRP_COUNT!"
+if !GRP_COUNT! GTR 9 set "GRP_SHOWN=9"
+goto :eof
+
+rem %1 = folder name, %2 = variable that receives the session name
+:grp_name
+set "%~2="
+for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" name "%~1" "!GRP_MODEL!" !GRP_BIN! 2^>nul`) do if "%%A"=="NAME" set "%~2=%%B"
+goto :eof
+
+rem %1 = key, %2 = box, %3 = text, %4 = hint. :item with a checkbox column.
+:grp_row
+set "BF_L=%~3!BF_PAD!"
+set "BF_L=!BF_L:~0,30!"
+set "BF_H=%~4"
+if not defined BF_COLOR goto :grp_row_plain
+echo(   [!ESC![!BF_ACCENT!m%~1!ESC![0m] %~2 !BF_L! !ESC![!BF_DIM!m!BF_H!!ESC![0m
+goto :eof
+:grp_row_plain
+echo(   [%~1] %~2 !BF_L! !BF_H!
+goto :eof
+
+rem %1 = 0 or 1 -> BF_BOX
+:grp_box
+set "BF_BOX=[ ]"
+if "%~1"=="1" set "BF_BOX=[x]"
+goto :eof
+
+:grp_folders
+call :header "!AI_NAME! / Folders"
+call :sec "RELATED FOLDERS"
+call :grp_row "-" "[x]" "!REPO_LEAF!" "this folder, always on"
+for /l %%i in (1,1,!GRP_SHOWN!) do call :grp_folder_row %%i
+if !GRP_COUNT! GTR 9 call :note "Only the first 9 related folders are shown."
+call :note "Each ticked folder opens in its own tab with the settings above."
+call :note "Names follow the pattern !GRP_MAINNAME!."
+set "BF_MKEYS="
+for /l %%i in (1,1,!GRP_SHOWN!) do set "BF_MKEYS=!BF_MKEYS!%%i"
+set "BF_MRANGE=1-!GRP_SHOWN!   "
+if "!GRP_SHOWN!"=="1" set "BF_MRANGE=1   "
+call :foot "!BF_MRANGE![A] all  [N] none  [C] go  [B] back  [Q] quit" "default C"
+call :menu_key "!BF_MKEYS!ANCBQ" "C"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :grp_back
+if "!BF_CH!"=="C" goto :grp_folders_done
+if "!BF_CH!"=="A" for /l %%i in (1,1,!GRP_SHOWN!) do set "GRP_TICK%%i=1"
+if "!BF_CH!"=="N" for /l %%i in (1,1,!GRP_SHOWN!) do set "GRP_TICK%%i=0"
+if "!BF_CH!"=="A" goto :grp_folders
+if "!BF_CH!"=="N" goto :grp_folders
+for %%i in (!BF_CH!) do set /a "GRP_TICK%%i=1-GRP_TICK%%i"
+goto :grp_folders
+:grp_folder_row
+call :grp_box "!GRP_TICK%1!"
+call :grp_row "%1" "!BF_BOX!" "!GRP_REL%1!" ""
+goto :eof
+:grp_back
+if "!GRP_BIN!"=="codex" goto :cx_prompt
+goto :cl_ide
+
+:grp_folders_done
+set "GRP_ON="
+for /l %%i in (1,1,!GRP_SHOWN!) do if "!GRP_TICK%%i!"=="1" set "GRP_ON=1"
+if not defined GRP_ON goto :confirm
+if not defined GRP_LINK set "GRP_LINK=0"
+for %%d in (1 2 3) do set "GRP_L%%d=0"
+for %%d in (1 2 3) do if not "!GRP_LINK:%%d=!"=="!GRP_LINK!" set "GRP_L%%d=1"
+set "GRP_ACC=%USERPROFILE%\.claude"
+if defined CLAUDE_CONFIG_DIR set "GRP_ACC=!CLAUDE_CONFIG_DIR!"
+set "GRP_ACCKIND=account"
+if "!GRP_BIN!"=="codex" set "GRP_ACCKIND=codex"
+rem The codex on PATH may be a wrapper that sets its own CODEX_HOME.
+if "!GRP_BIN!"=="codex" for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" codex-home 2^>nul`) do if "%%A"=="HOME" set "GRP_ACC=%%B"
+
+:grp_link
+rem The folder hook is a Claude settings file; Codex gets the account hook.
+if "!GRP_BIN!"=="codex" set "GRP_L1=0"
+call :header "!AI_NAME! / Link sessions"
+call :sec "LINK SESSIONS"
+call :grp_box "!GRP_L1!"
+if "!GRP_BIN!"=="codex" set "BF_BOX=[-]"
+call :grp_row "1" "!BF_BOX!" "Peer hook in each folder" ".claude\settings.json, Claude only"
+call :grp_box "!GRP_L2!"
+call :grp_row "2" "!BF_BOX!" "Peer hook for this account" "!GRP_ACC!"
+call :grp_box "!GRP_L3!"
+call :grp_row "3" "!BF_BOX!" "Startup note" "peer list given at start"
+call :note "A hook tells each session which peers are live, on every prompt."
+call :note "Each change is shown and asked for before anything is written."
+if "!GRP_BIN!"=="codex" call :note "Codex runs a new hook only after you trust it once with /hooks."
+if "!GRP_L3!"=="1" if defined CL_SYSPROMPT call :note "A system prompt is already set, so the startup note is skipped."
+call :foot "1-3   [C] go   [B] back   [Q] quit" "default C"
+call :menu_key "123CBQ" "C"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="B" goto :grp_folders
+if "!BF_CH!"=="C" goto :grp_link_done
+for %%i in (!BF_CH!) do set /a "GRP_L%%i=1-GRP_L%%i"
+goto :grp_link
+
+:grp_link_done
+if defined CL_SYSPROMPT set "GRP_L3=0"
+set "GRP_LINK="
+for %%d in (1 2 3) do if "!GRP_L%%d!"=="1" set "GRP_LINK=!GRP_LINK!%%d"
+for /l %%i in (1,1,!GRP_SHOWN!) do if "!GRP_TICK%%i!"=="1" call :grp_name "!GRP_REL%%i!" GRP_NAME%%i
+set "GRP_INST=0"
+set "GRP_SKIP=0"
+set "GRP_FAIL=0"
+if "!GRP_L1!"=="1" call :grp_target folder "!REPO_ROOT!"
+if "!GRP_L1!"=="1" for /l %%i in (1,1,!GRP_SHOWN!) do if "!GRP_TICK%%i!"=="1" call :grp_target folder "!GRP_PARENT!\!GRP_REL%%i!"
+if "!GRP_L2!"=="1" call :grp_target !GRP_ACCKIND! "!GRP_ACC!"
+if defined BF_STOP goto :cleanup
+goto :confirm
+
+rem %1 = folder, account or codex; %2 = the directory. Shows what would change
+rem and installs only on Y (BAT-109). An up-to-date target is passed silently.
+:grp_target
+if defined BF_STOP goto :eof
+set "GRP_ST="
+set "GRP_PN=0"
+for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" check %1 "%~2" 2^>nul`) do (
+  if "%%A"=="STATUS" set "GRP_ST=%%B"
+  if "%%A"=="PLAN" set /a GRP_PN+=1
+  if "%%A"=="PLAN" set "GRP_P!GRP_PN!=%%B"
+)
+if "!GRP_ST!"=="current" goto :eof
+call :header "!AI_NAME! / Link sessions / Install"
+call :sec "PEER HOOK"
+call :kv "Target" "%~2"
+call :kv "Status" "!GRP_ST!"
+call :sec "CHANGES"
+for /l %%p in (1,1,!GRP_PN!) do call :note "!GRP_P%%p!"
+if "!GRP_ST!"=="unreadable" goto :grp_target_bad
+if "!GRP_ST!"=="foreign" call :note "A different session-peers hook is there now; Y replaces it."
+call :foot "[Y] install   [N] skip" "default N"
+call :menu_key "YN" "N"
+if defined BF_STOP goto :eof
+if "!BF_CH!"=="N" set /a GRP_SKIP+=1
+if "!BF_CH!"=="N" goto :eof
+set "GRP_IERR="
+for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" install %1 "%~2" 2^>^&1`) do if "%%A"=="ERR" set "GRP_IERR=%%B"
+if defined GRP_IERR set /a GRP_FAIL+=1
+if defined GRP_IERR set "GRP_NOTE=Hook install failed in %~2: !GRP_IERR!"
+if not defined GRP_IERR set /a GRP_INST+=1
+goto :eof
+:grp_target_bad
+call :note "Fix the JSON in that settings file, then start ai.bat again."
+call :foot "[C] continue" "default C"
+call :menu_key "C" "C"
+set /a GRP_FAIL+=1
+goto :eof
+
+rem The SESSIONS block on the Confirm screen.
+:grp_sessions
+call :sec "SESSIONS"
+call :kv "!GRP_MAINNAME!" "!REPO_ROOT!"
+for /l %%i in (1,1,!GRP_SHOWN!) do if "!GRP_TICK%%i!"=="1" call :kv "!GRP_NAME%%i!" "!GRP_PARENT!\!GRP_REL%%i!"
+set /a "GRP_HOOKS=GRP_INST+GRP_SKIP+GRP_FAIL"
+if not "!GRP_HOOKS!"=="0" call :note "Peer hook: !GRP_INST! installed, !GRP_SKIP! skipped, !GRP_FAIL! failed."
+if "!GRP_L3!"=="1" call :note "Startup note: on."
+goto :eof
+
+:grp_launch
+if defined AX_SRC if /i "!AX_SRC:~0,6!"=="pasted" goto :grp_key
+:grp_launch_go
+call :header "Launching group"
+set "GRP_ENV=%TEMP%\ai-bat-grp-%RANDOM%%RANDOM%.env"
+rem The tabs get their own names, so the main folder's -n comes off the
+rem shared command; ai-group.mjs adds one per tab.
+set "GRP_BASECMD=!CMD!"
+if defined CL_AUTONAME for %%N in ("!CL_AUTONAME!") do set "GRP_BASECMD=!GRP_BASECMD: -n "%%~N"=!"
+if defined CL_SESSION for %%S in ("!CL_SESSION!") do set "GRP_BASECMD=!GRP_BASECMD:%%~S=!"
+> "!GRP_ENV!" (
+  for %%V in (AI_KIND AI_NAME CL_AUTH AX_SHAPE AX_URL AX_KEYVAR AX_MODEL AX_FAST AX_EFFORT AX_COMPACT BF_AWAKE) do if defined %%V echo(%%V=!%%V!
+  rem Always written, empty for Default, so a tab never keeps a profile dir
+  rem it inherited from its own environment.
+  echo(CLAUDE_CONFIG_DIR=!CLAUDE_CONFIG_DIR!
+  echo(CMD=!GRP_BASECMD!
+  if "!GRP_L3!"=="1" echo(AI_BAT_LINK_NOTE=1
+  if defined CL_SESSION echo(AI_BAT_MAIN_NAME=!GRP_MAINNAME!
+)
+set "GRP_DIRS="!REPO_ROOT!""
+set "GRP_NAMES="
+for /l %%i in (1,1,!GRP_SHOWN!) do if "!GRP_TICK%%i!"=="1" set GRP_DIRS=!GRP_DIRS! "!GRP_PARENT!\!GRP_REL%%i!"
+for /l %%i in (1,1,!GRP_SHOWN!) do if "!GRP_TICK%%i!"=="1" set GRP_NAMES=!GRP_NAMES! "!GRP_REL%%i!"
+call node "!SCRIPT_DIR!\ai-group.mjs" remember "!GRP_PRODUCT!" "!GRP_LINK!" !GRP_NAMES! >nul 2>&1
+set "GRP_STARTED="
+set "GRP_VIA="
+for /f "usebackq tokens=1,* delims==" %%A in (`node "!SCRIPT_DIR!\ai-group.mjs" launch "!GRP_ENV!" !GRP_BIN! "!GRP_MODEL!" !GRP_DIRS! 2^>^&1`) do (
+  if "%%A"=="RUN" echo(   dry run: %%B
+  if "%%A"=="STARTED" set "GRP_STARTED=%%B"
+  if "%%A"=="VIA" set "GRP_VIA=%%B"
+  if "%%A"=="ERR" echo(   ERROR: %%B
+)
+del "!GRP_ENV!" >nul 2>&1
+if not defined GRP_STARTED goto :grp_launch_fail
+echo(
+call :info "Started !GRP_STARTED! sessions, via !GRP_VIA!. This window can close."
+set "BF_EXIT=0"
+goto :cleanup
+:grp_launch_fail
+call :err "the group did not start - the error above says why; the main folder alone still works from [R]"
+set "BF_EXIT=1"
+goto :cleanup
+
+:grp_key
+call :header "Launching group"
+call :sec "API KEY"
+call :note "This key was pasted for this run only. Each tab starts on its own"
+call :note "and can read only a saved key, so save it or start this folder alone."
+call :item "S" "Save the key" "as !AX_KEYVAR! for your user"
+call :item "M" "This folder only" "one session, here"
+call :foot "[S] save   [M] this folder only   [Q] quit" "default M"
+call :menu_key "SMQ" "M"
+if defined BF_STOP goto :cleanup
+if "!BF_CH!"=="Q" goto :quit
+if "!BF_CH!"=="M" goto :run
+call :key_save
+if /i "!AX_SRC:~0,6!"=="pasted" goto :run
+goto :grp_launch_go
 
 
 rem ============================================================================
@@ -3024,6 +3389,7 @@ if /i "!BF_A!"=="--effort"  goto :args_effort
 if /i "!BF_A!"=="--perm"    goto :args_perm
 if /i "!BF_A!"=="--account" goto :args_account
 if /i "!BF_A!"=="--extra"   goto :args_extra
+if /i "!BF_A!"=="--child"   goto :args_child
 call :err "unknown argument '!BF_A!'; try --help"
 set "BF_EXIT=2"
 goto :eof
@@ -3165,6 +3531,13 @@ goto :parse_args
 :args_extra
 if "%~2"=="" goto :args_val_missing
 set "BF_EXTRA=!BF_EXTRA! %~2"
+shift
+shift
+goto :parse_args
+rem Internal: one tab of a multi-folder launch. ai-group.mjs writes the file.
+:args_child
+if "%~2"=="" goto :args_val_missing
+set "BF_CHILD=%~2"
 shift
 shift
 goto :parse_args
@@ -3328,16 +3701,21 @@ echo(  AI_BAT_CUSTOM_BACKEND  claude ^(default^) or codex - which CLI drives it
 echo(  NO_COLOR            disables color when set and non-empty
 echo(  FORCE_COLOR         re-enables color unless NO_COLOR is set
 echo(  CI, NO_INPUT        force non-interactive mode
+echo(  AI_BAT_GROUP_DRYRUN print a multi-folder launch instead of opening tabs
 echo(
 echo(Files:
 echo(  ai-models.json   Model menus for claude, codex, deepseek and custom, JSON,
 echo(                   next to the script. Edit by hand or refresh with
 echo(                   --update-models / [U]; the custom list is only ever yours.
 echo(                   Created with defaults on first use.
+echo(  ai-group.mjs     Node helper for the multi-folder launch: finds related
+echo(                   folders, names sessions, installs the peer hook, opens tabs.
+echo(  session-peers.mjs  The peer hook. Tells each session which sessions of the
+echo(                   same product are live. Copied or referenced on request.
 echo(
 echo(Exit codes:
 echo(  0   success
-echo(  1   model list update, or right-click menu change, failed
+echo(  1   model list update, right-click menu change, or group launch failed
 echo(  2   usage error
 echo(  3   missing dependency ^(choice.exe unavailable^)
 echo(  4   cancelled by user
@@ -3356,6 +3734,7 @@ rem  (BAT-302).
 rem ============================================================================
 :cleanup
 call :awake_stop
+if defined BF_CHILD_REG call node "!SCRIPT_DIR!\ai-group.mjs" unregister "!BF_CHILD_REG!" >nul 2>&1
 if defined BF_COLOR <nul set /p "=!ESC![0m!ESC![?25h" 1>&2
 if defined BF_CP chcp !BF_CP! >nul 2>&1
 if defined MDL_LINES if exist "!MDL_LINES!" del "!MDL_LINES!" >nul 2>&1
